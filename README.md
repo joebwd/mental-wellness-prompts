@@ -189,4 +189,4 @@ Mental wellness support should be accessible to everyone. These templates aim to
 
 *For urgent mental health needs, always direct to professional services and crisis resources.*
 
-**Version 1.0** | Released under MIT License | In memory of Chris and all those fighting for mental wellness
+**Version 1.0** | Released under MIT License | In memory of Chris Paley-Smith and all those fighting for mental wellness and positivity 🧡
