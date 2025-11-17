@@ -1,6 +1,6 @@
 # Mental Wellness Conversation Templates
 
-Production-ready templates for AI-powered mental wellness support. Includes conversation frameworks, safety protocols, crisis resources, and implementation guides derived from evidence-based practices.
+Templates for AI-powered mental wellness support. Includes conversation frameworks, safety protocols, crisis resources, and implementation guides derived from evidence-based practices.
 
 
 ## Purpose & Vision
@@ -19,10 +19,11 @@ These open-source templates provide evidence-based conversation frameworks for A
 
 ### 2. Key Features
 - Evidence-based therapeutic techniques adapted for AI
-- Multi-cultural sensitivity and adaptation
-- Comprehensive safety protocols
+- Multi-cultural sensitivity and adaptation (10 languages)
+- Production-ready crisis detection (100+ patterns, 29 countries, sub-1ms regex + ML tiers)
+- Comprehensive safety protocols with post-crisis mode
 - Professional boundary management
-- Crisis resource integration
+- Automated testing and validation framework
 
 ## How to Use These Templates
 
@@ -40,9 +41,9 @@ These open-source templates provide evidence-based conversation frameworks for A
    validate before questioning, plain language preferred
    ```
 
-### For ChatGPT Custom GPTs
+### For ChatGPT Custom GPTs or Projects
 
-1. Create a new Custom GPT
+1. Create a new Custom GPT or Project
 2. In Instructions, paste relevant sections from the guides
 3. In Conversation Starters, add:
    - "I'm feeling overwhelmed"
@@ -77,11 +78,11 @@ You can adapt these templates for:
 - Platform constraints (length, formatting, features)
 
 ### What NOT to Do
-- ❌ Present as therapy or medical treatment
-- ❌ Remove safety protocols
-- ❌ Make diagnostic claims
-- ❌ Suggest medication changes
-- ❌ Replace professional care
+- X Present as therapy or medical treatment
+- X Remove safety protocols
+- X Make diagnostic claims
+- X Suggest medication changes
+- X Replace professional care
 
 ## Ethical Considerations
 
@@ -93,20 +94,20 @@ You can adapt these templates for:
 - Transparent about AI limitations
 
 ### Appropriate Use Cases
-✓ Emotional support and validation  
-✓ Self-reflection facilitation  
-✓ Stress management techniques  
-✓ Sleep hygiene education  
-✓ Coping skill development  
-✓ Crisis resource connection  
+[x] Emotional support and validation
+[x] Self-reflection facilitation
+[x] Stress management techniques
+[x] Sleep hygiene education
+[x] Coping skill development
+[x] Crisis resource connection
 
 ### Inappropriate Use Cases
-✗ Clinical diagnosis  
-✗ Medication management  
-✗ Severe mental illness treatment  
-✗ Child/adolescent primary support  
-✗ Legal or medical advice  
-✗ Crisis intervention  
+[ ] Clinical diagnosis
+[ ] Medication management
+[ ] Severe mental illness treatment
+[ ] Child/adolescent primary support
+[ ] Legal or medical advice
+[ ] Crisis intervention  
 
 ## Background & Attribution
 
@@ -159,6 +160,59 @@ By using these templates, you acknowledge that:
 - [ ] Plan for regular updates
 - [ ] Establish escalation procedures
 
+---
+
+## Evolution & Testing (NEW in v1.1)
+
+### Battle-Tested Templates
+
+These templates are grounded in 12+ months of systematic development and real-world implementation experience (October 2024-October 2025). Each constraint addresses specific challenges encountered during actual deployments.
+
+**[EVOLUTION.md](EVOLUTION.md)** - Why each rule exists, with real examples and regulatory context (Illinois HB1806)
+
+**[TESTING.md](TESTING.md)** - Automated validation framework to ensure your implementation stays aligned
+
+**[IMPROVEMENTS.md](IMPROVEMENTS.md)** - v1.1 enhancements based on applied learnings
+
+**[ARCHITECTURE.md](ARCHITECTURE.md)** - Multi-agent supervisor patterns with working Python code
+
+**[examples/](examples/)** - Production-ready code including multi-tier crisis detection (100+ patterns, 10 languages, 29 countries), quality evaluation, and tone detection
+
+### Quick Validation
+
+```python
+# 5 core compliance tests
+[x] Brevity (responses < 60 words)
+[x] No therapy jargon
+[x] No "Before I answer..." pattern
+[x] Crisis detection working
+[x] No markdown formatting
+```
+
+### Key Insights
+
+- **Regulatory compliance matters**: Illinois HB1806 (Aug 2025) banned AI therapy - jargon avoidance is now legally prudent
+- **AI needs aggressive constraints**: Brevity and clarity rules must be at the top with CRITICAL flags
+- **Testing prevents drift**: Automated validation catches issues before they affect users
+- **Crisis detection is production-ready**: Multi-tier system with regex (sub-1ms), ML screening, false-positive filtering, circuit breakers, and comprehensive resource database
+
+### Contributing
+
+We welcome contributions that enhance safety, share implementation learnings, or add regional crisis resources. See individual documentation files for open questions and areas needing community input.
+
+---
+
+## Additional Resources (NEW)
+
+- **[EVOLUTION.md](EVOLUTION.md)** - Development story and rationale
+- **[TESTING.md](TESTING.md)** - Validation framework
+- **[IMPROVEMENTS.md](IMPROVEMENTS.md)** - v1.1 proposals
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Multi-agent patterns
+- **[FAILED_APPROACHES.md](FAILED_APPROACHES.md)** - What didn't work
+- **[examples/](examples/)** - Working code examples
+
+---
+
 ## Support & Resources
 
 ### Crisis Prevention
@@ -189,4 +243,4 @@ Mental wellness support should be accessible to everyone. These templates aim to
 
 *For urgent mental health needs, always direct to professional services and crisis resources.*
 
-**Version 1.0** | Released under MIT License | In memory of Chris Paley-Smith and all those fighting for mental wellness and positivity 🧡
+**Version 1.1** | November 2025 | Released under MIT License | In memory of Chris Paley-Smith and all those fighting for mental wellness and positivity 🧡

@@ -2,6 +2,8 @@
 
 *Essential safety guidelines for mental wellness support conversations*
 
+**Version 1.1** | November 2025
+
 ## Immediate Safety Priorities
 
 ### Recognition Phrases
