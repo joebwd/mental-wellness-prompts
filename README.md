@@ -1,6 +1,8 @@
-# Mental Wellness Conversation Templates
+# Mental Wellness Prompts and Moss CLI
 
-Templates for AI-powered mental wellness support. Includes conversation frameworks, safety protocols, crisis resources, and implementation guides derived from evidence-based practices.
+Open-source materials for AI-assisted mental wellness support. The repo includes reusable prompt frameworks, safety protocols, crisis resources, sample pathways, and a local-first reference CLI called Moss.
+
+It is also a working record of the scrutiny behind those materials: testing notes, architecture tradeoffs, failed approaches, and implementation changes made to improve safety, clarity, and practical usefulness over time.
 
 
 ## Purpose & Vision
@@ -11,19 +13,45 @@ These open-source templates provide evidence-based conversation frameworks for A
 
 ## What's Included
 
-### 1. Core Resources
-- **Mental Wellness Conversation Guide** - Complete framework for supportive AI conversations
-- **Tone & Style Configuration** - Settings for compassionate, therapeutic-informed responses
-- **Safety Protocols & Crisis Resources** - Essential safety guidelines and emergency resources
-- **Sample Pathway: Sleep & Rest** - Example of structured support for specific challenges
+### 1. Prompt and Safety Resources
+- **Mental Wellness Conversation Guide** - the main support framework for bounded, reflective conversations
+- **Tone & Style Configuration** - practical response-shaping rules for warmth, brevity, and plain language
+- **Safety Protocols & Crisis Resources** - guardrails, escalation rules, and region-aware emergency references
+- **Sample Pathways** - example support structures for areas like anxiety and sleep
 
-### 2. Key Features
-- Evidence-based therapeutic techniques adapted for AI
-- Multi-cultural sensitivity and adaptation (10 languages)
-- Production-ready crisis detection (100+ patterns, 29 countries, sub-1ms regex + ML tiers)
-- Comprehensive safety protocols with post-crisis mode
-- Professional boundary management
-- Automated testing and validation framework
+### 2. Scrutiny, Testing, and Improvement Notes
+- **[TESTING.md](TESTING.md)** - validation strategy, safety checks, and regression coverage
+- **[EVOLUTION.md](EVOLUTION.md)** - how the guidance changed in response to real implementation pressure
+- **[IMPROVEMENTS.md](IMPROVEMENTS.md)** - areas that were refined after hands-on use
+- **[FAILED_APPROACHES.md](FAILED_APPROACHES.md)** - patterns and ideas that did not hold up well enough to keep
+
+### 3. Reference Implementation
+- **[wellness_cli/](wellness_cli/README.md)** - Moss, a local-first terminal companion that packages the prompts, memory model, and safety architecture into a runnable tool
+- **[examples/](examples/README.md)** - smaller subsystem examples and test harnesses for crisis detection, tone evaluation, and related behavior
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - implementation rationale, system boundaries, and multi-agent/governance notes
+
+## Repo Map
+
+This repo is organized as both a source library of prompts/frameworks and a working reference implementation.
+
+- **Root documents** - reusable conversation guidance, tone rules, crisis resources, pathways, and implementation notes for adapting the approach to other AI platforms
+- **[wellness_cli/](wellness_cli/README.md)** - the reference terminal app in this repo; a local-first companion with memory, check-ins, provider abstraction, and a branded CLI you can run with `./moss`
+- **[examples/](examples/README.md)** - smaller implementation patterns and test harnesses for specific subsystems like crisis detection and tone evaluation
+- **[ARCHITECTURE.md](ARCHITECTURE.md)**, **[EVOLUTION.md](EVOLUTION.md)**, **[TESTING.md](TESTING.md)** - deeper rationale, validation, and system design material
+
+For the Moss CLI specifically, the repo now uses a split design: conversational safety lives inside Moss in Python, while governed side effects are delegated to a local-first PangoClaw sidecar over its Unix-socket contract. See [wellness_cli/README.md](wellness_cli/README.md) for the runtime details and the Glacis Shield note for any future shared deployment story.
+
+The repo now also includes Python package metadata so Moss can be installed with `pip install -e .`, run via the `moss` console script, and imported through the dependency-friendly `moss_core` namespace instead of being embedded source-only.
+
+## Why This System Is Useful
+
+The repo is opinionated about a few things that make ongoing conversations more valuable than a generic one-off chat.
+
+- **Continuity without cloud lock-in** - the reference CLI remembers facts, summaries, and mood trends across sessions, but that memory stays on your machine instead of being tied to a SaaS account.
+- **Open source all the way down** - the prompts, safety logic, crisis rules, storage model, and terminal implementation are readable and editable, so you can inspect what the system is doing instead of trusting a black box.
+- **Provider flexibility** - you can bring Claude Code, Gemini CLI, or Codex CLI and keep the same companion behavior, which lowers switching costs and keeps the value in the system design rather than one vendor.
+- **Human-readable profile and rules** - the `SOUL.md` and `AGENTS.md` files make the companion's identity, boundaries, and operating rules explicit, so the experience can evolve without becoming mysterious.
+- **Safety and steadiness by default** - the conversation system is built around bounded support, crisis escalation, plain language, and memory that is meant to reduce repetition rather than create dependency.
 
 ## How to Use These Templates
 

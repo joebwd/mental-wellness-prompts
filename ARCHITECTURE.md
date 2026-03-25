@@ -6,6 +6,15 @@ These templates are designed to work within a **multi-agent architecture** where
 
 This pattern aligns with research on building effective AI agents: use multiple specialized models working together rather than trying to make one model do everything.
 
+## Moss Split Safety Architecture
+
+The `wellness_cli` reference app now applies that idea in a narrower, production-oriented way:
+
+- **Main conversation safety is local to Moss in Python.** A deterministic wellness safety supervisor runs before provider calls, tracks explicit crisis session state, and screens streamed assistant output before it is rendered.
+- **PangoClaw is reserved for governed side effects.** It is not the primary turn-by-turn safety layer. Instead, Moss uses the local sidecar's Unix-socket contract for governed actions such as fact extraction, session summarization, profile refinement, onboarding follow-up generation, and plaintext transcript export.
+
+That split keeps the latency-sensitive, user-visible safety boundary inside the app while still giving autonomous side effects an approval and audit trail. The sidecar model is intentionally local-first; if this system later needs shared or production governance, the right path is Glacis Shield rather than stretching the developer-sidecar design.
+
 ---
 
 ## Core Architecture Pattern

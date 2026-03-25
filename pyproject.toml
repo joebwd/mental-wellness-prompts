@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moss-core"
+version = "0.1.0"
+description = "Local-first wellness companion core and CLI"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = [
+  "rich>=13.0.0",
+  "chromadb>=0.5.0",
+  "cryptography>=43.0.0",
+]
+
+[project.scripts]
+moss = "wellness_cli.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["wellness_cli", "wellness_cli.*", "moss_core", "moss_core.*"]

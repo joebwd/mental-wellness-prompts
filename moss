@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Moss — branded launcher for the mental wellness companion
+#
+# Usage: ./moss                              # claude + model picker
+#        ./moss --provider gemini            # gemini + model picker
+#        ./moss --provider codex             # codex + model picker
+#        ./moss -p gemini -m gemini-2.5-pro  # explicit model
+#        ./moss --reset                      # clear stored data
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Keep library downloads and helper work quiet by default.
+export HF_HUB_DISABLE_PROGRESS_BARS=1
+
+# Silently ensure dependencies are installed only when missing
+if ! python3 - <<'PY' >/dev/null 2>&1
+import importlib
+
+for name in ("rich", "chromadb", "cryptography"):
+    importlib.import_module(name)
+PY
+then
+  python3 -m pip install -r "$SCRIPT_DIR/requirements.txt" >/dev/null 2>&1 || {
+    printf 'Missing Python dependencies and automatic install failed.\n' >&2
+    printf 'Run: python3 -m pip install -r requirements.txt\n' >&2
+    exit 1
+  }
+fi
+
+# Launch from the script directory so `python -m wellness_cli` resolves
+export PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}"
+python3 -m wellness_cli "$@"
