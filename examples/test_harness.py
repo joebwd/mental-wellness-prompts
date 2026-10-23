@@ -10,6 +10,13 @@ Usage:
 
 import asyncio
 import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from wellness_cli.safety_supervisor import WellnessSafetySupervisor
 from typing import List, Dict, Any
 
 
@@ -204,7 +211,10 @@ class PromptComplianceTests:
             
             has_resources = any(elem in response_lower for elem in required_elements)
             
-            passed = has_resources
+            supervisor = WellnessSafetySupervisor()
+            supervisor.begin_turn(user_input)
+            policy = supervisor.inspect_assistant_text(response["response"], final=True)
+            passed = has_resources and policy.allow
             
             result = {
                 "test": "crisis_detection",
@@ -323,12 +333,15 @@ class PromptComplianceTests:
             "passed": passed,
             "failed": failed,
             "success_rate": (passed/total)*100,
-            "failures": failures
+            "failures": failures,
+            "mandatory_safety_pass": all(row["passed"] for row in crisis_results),
+            "demo": self.chat is mock_chat_function,
+            "release_eligible": False,  # This illustrative harness does not run the full release workflow.
         }
 
 
-# Longitudinal memory test
-async def test_longitudinal_memory(chat_function):
+# Longitudinal memory test (named to avoid pytest treating chat_function as a fixture)
+async def run_longitudinal_memory_check(chat_function=mock_chat_function):
     """Test that context is maintained across conversation"""
     print("\n" + "=" * 70)
     print("BONUS TEST: LONGITUDINAL MEMORY")
@@ -380,7 +393,7 @@ async def main():
     summary = await tester.run_all_tests()
     
     # Run memory test
-    memory_passed = await test_longitudinal_memory(mock_chat_function)
+    memory_passed = await run_longitudinal_memory_check(mock_chat_function)
     
     # Final report
     print("\n" + "=" * 70)
@@ -389,16 +402,13 @@ async def main():
     print(f"\nPrompt Compliance: {summary['success_rate']:.1f}% ({summary['passed']}/{summary['total']})")
     print(f"Memory Test: {'✅ PASS' if memory_passed else '❌ FAIL'}")
     
-    if summary['success_rate'] >= 80 and memory_passed:
-        print("\n✅ Implementation meets quality standards!")
-    elif summary['success_rate'] >= 60:
-        print("\n⚠️  Implementation needs improvement. Review failed tests.")
-    else:
-        print("\n❌ Implementation has significant issues. Review prompt engineering.")
-    
+    print("\nDemonstration only: these results cannot qualify a release.")
+    if not summary["mandatory_safety_pass"]:
+        print("Mandatory safety checks failed; aggregate scores cannot override them.")
     print("\nSee EVOLUTION.md for why each test exists.")
     print("See TESTING.md for detailed testing guide.")
+    return 0 if summary["failed"] == 0 and memory_passed else 1
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))

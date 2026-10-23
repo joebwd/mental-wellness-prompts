@@ -21,13 +21,21 @@ import hashlib
 import json
 import logging
 import re
+import sys
 import time
 from abc import ABC, abstractmethod
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
+
+# Allow the documented direct-script invocation as well as package imports.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from wellness_cli.safety_supervisor import COMPLETE_DENIAL_RE, normalize_policy_text
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -136,27 +144,27 @@ class CrisisResource:
 
 @dataclass
 class UserCrisisState:
-    """User crisis state tracking"""
+    """User crisis state tracking (Pillar 1: non-expiring post-crisis guardrails)"""
 
     user_id: str
     state: CircuitState = CircuitState.CLOSED
     crisis_count: int = 0
     last_crisis_time: Optional[datetime] = None
+    window_started_time: Optional[datetime] = None
     resources_shown_time: Optional[datetime] = None
     post_crisis_messages: int = 0
+    post_crisis_latched: bool = False
+    never_expires: bool = True
     severity_history: List[CrisisSeverity] = field(default_factory=list)
 
     def should_bypass_analysis(self, window_minutes: int = 30) -> bool:
-        """Check if we should bypass analysis and go straight to resources"""
-        if self.state == CircuitState.OPEN:
-            return True
+        """Use the canonical circuit decision, never infer risk from a raw count.
 
-        if self.last_crisis_time:
-            time_since_crisis = datetime.now() - self.last_crisis_time
-            if time_since_crisis < timedelta(minutes=window_minutes):
-                return self.crisis_count >= 3
-
-        return False
+        ``window_minutes`` remains accepted for API compatibility. Evidence
+        windows and optional recovery are owned by CircuitBreaker; an isolated
+        MODERATE observation must not become an indefinite crisis interruption.
+        """
+        return self.post_crisis_latched or self.state == CircuitState.OPEN
 
 
 # ============================================================================
@@ -417,19 +425,13 @@ class PatternDatabase:
     def get_false_positive_patterns() -> List[str]:
         """Patterns that commonly trigger false positives"""
         return [
-            r"deadline.*kill",  # "deadline is killing me"
-            r"kill.*time",  # "killing time"
-            r"die.*laugh",  # "dying of laughter"
-            r"die.*embarra",  # "dying of embarrassment"
-            r"die.*bored",  # "dying of boredom"
-            r"to\s+die\s+for",  # "to die for" (really good)
-            r"drop[\s-]?dead",  # "drop dead gorgeous"
-            r"kill.*game",  # "kill it in the game"
-            r"crush.*kill",  # "crush is killing me"
-            r"kill.*performan",  # "killing it performance-wise"
-            r"die.*hair",  # "dye my hair" (common misspelling)
-            r"battery.*die",  # "battery dying"
-            r"phone.*die",  # "phone dying"
+            # Exact idiom spans only. Never suppress an entire disclosure merely
+            # because unrelated text mentions a joke, game, phone, or battery.
+            r"\b(?:kill|killing)\s+time\b",
+            r"\b(?:die|dying)\s+(?:laughing|of\s+(?:laughter|embarrassment|boredom))\b",
+            r"\bto\s+die\s+for\b",
+            r"\bdrop[\s-]?dead\s+gorgeous\b",
+            r"\bkilling\s+it\b",
         ]
 
 
@@ -466,25 +468,25 @@ class RegexDetector(BaseDetector):
         """Fast regex-based detection (<1ms target)"""
         start_time = time.time()
 
-        # Check false positives first
-        if self._is_false_positive(text):
-            return CrisisDetectionResult(
-                severity=CrisisSeverity.NONE,
-                confidence=0.95,
-                indicators=["false_positive"],
-                detection_method="regex_false_positive",
-                latency_ms=(time.time() - start_time) * 1000,
-            )
+        # Remove only exact harmless idioms; continue checking the rest of the
+        # same message so an idiom cannot veto a separate crisis disclosure.
+        screened_text = COMPLETE_DENIAL_RE.sub("[explicit denial]", normalize_policy_text(text))
+        for pattern in self.compiled_false_positives:
+            screened_text = pattern.sub(" ", screened_text)
+        had_idiom = screened_text != text
 
         # Detect language (simplified - in production, use proper language detection)
         language = self._detect_language(text)
-        patterns = self.patterns.get(language, self.patterns["en"])
+        # Script detection is only a display hint. It must not decide which
+        # safety patterns are eligible: mixed-language disclosures are common.
+        patterns = [pattern for language_patterns in self.patterns.values()
+                    for pattern in language_patterns]
 
         # Check patterns
         matched_patterns: List[Tuple[CrisisPattern, re.Match]] = []
         for pattern in patterns:
             regex = re.compile(pattern.pattern, re.IGNORECASE)
-            if match := regex.search(text):
+            if match := regex.search(screened_text):
                 matched_patterns.append((pattern, match))
 
         # No matches
@@ -492,13 +494,14 @@ class RegexDetector(BaseDetector):
             return CrisisDetectionResult(
                 severity=CrisisSeverity.NONE,
                 confidence=0.90,
-                detection_method="regex_no_match",
+                detection_method="regex_false_positive" if had_idiom else "regex_no_match",
                 language=language,
                 latency_ms=(time.time() - start_time) * 1000,
             )
 
         # Calculate severity and confidence
         max_severity = max(p.severity for p, _ in matched_patterns)
+        language = next(p.language for p, _ in matched_patterns if p.severity == max_severity)
         categories = {p.category for p, _ in matched_patterns}
         indicators = [
             match.group() for _, match in matched_patterns[:5]
@@ -672,21 +675,29 @@ class CacheManager:
         if key in self.cache:
             result, timestamp = self.cache[key]
             if datetime.now() - timestamp < self.ttl:
-                result.cache_hit = True
-                return result
+                # A cache read must not mutate the classification used by other
+                # turns. Per-user state is applied after retrieval.
+                return replace(
+                    result, cache_hit=True,
+                    indicators=list(result.indicators), categories=set(result.categories),
+                )
             else:
                 del self.cache[key]
         return None
 
     def set(self, key: str, result: CrisisDetectionResult):
         """Cache a result"""
-        self.cache[key] = (result, datetime.now())
+        self.cache[key] = (
+            replace(result, cache_hit=False,
+                    indicators=list(result.indicators), categories=set(result.categories)),
+            datetime.now(),
+        )
 
     def create_key(self, text: str, context: Optional[List[str]] = None) -> str:
         """Create cache key from text and context"""
-        content = text
-        if context:
-            content += "|||" + "|||".join(context[-3:])  # Last 3 messages
+        # Structured encoding prevents text/context delimiter collisions. Keep
+        # all supplied context because an installed ML detector can inspect it.
+        content = json.dumps([text, context or []], ensure_ascii=False, separators=(",", ":"))
         return hashlib.sha256(content.encode()).hexdigest()
 
 
@@ -696,67 +707,80 @@ class CacheManager:
 
 
 class CircuitBreaker:
-    """Circuit breaker for repeated crisis events"""
+    """Track qualifying crisis evidence and a separate post-crisis latch.
+
+    HIGH/CRITICAL opens immediately. Repeated MODERATE observations open at the
+    configured threshold within the evidence window. The default latch never
+    expires until reset at an explicit session boundary. ``never_expires=False``
+    is an opt-in recovery mode, not the default wellness policy.
+    """
 
     def __init__(
         self,
         threshold: int = 3,
         window_seconds: int = 1800,
         recovery_seconds: int = 900,
+        never_expires: bool = True,
     ):
+        if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < 1:
+            raise ValueError("threshold must be a positive integer")
+        if window_seconds <= 0 or recovery_seconds <= 0:
+            raise ValueError("window and recovery must be positive")
+        if not isinstance(never_expires, bool):
+            raise ValueError("never_expires must be a boolean")
         self.threshold = threshold
-        self.window = timedelta(seconds=window_seconds)  # 30 minutes
-        self.recovery = timedelta(seconds=recovery_seconds)  # 15 minutes
+        self.window = timedelta(seconds=window_seconds)
+        self.recovery = timedelta(seconds=recovery_seconds)
+        self.never_expires = never_expires
         self.states: Dict[str, UserCrisisState] = {}
 
+    def _new_state(self, user_id: str) -> UserCrisisState:
+        return UserCrisisState(user_id=user_id, never_expires=self.never_expires)
+
     def record_crisis(self, user_id: str, severity: CrisisSeverity) -> UserCrisisState:
-        """Record a crisis event and update circuit state"""
-        if user_id not in self.states:
-            self.states[user_id] = UserCrisisState(user_id=user_id)
-
-        state = self.states[user_id]
+        """Apply a classification to this user, independent of cache origin."""
+        state = self.get_state(user_id)
+        if not severity >= CrisisSeverity.MODERATE:
+            return state
         now = datetime.now()
+        # The evidence window applies before opening even in permanent mode.
+        # Permanence describes the latch, not accumulation of unrelated history.
+        if (not state.should_bypass_analysis() and state.window_started_time
+                and now - state.window_started_time >= self.window):
+            state.crisis_count = 0
+            state.severity_history.clear()
+            state.window_started_time = None
+        if state.window_started_time is None:
+            state.window_started_time = now
 
-        # Reset counter if outside window
-        if state.last_crisis_time:
-            if now - state.last_crisis_time > self.window:
-                state.crisis_count = 0
-                state.severity_history.clear()
-
-        # Record new crisis
-        state.crisis_count += 1
+        state.crisis_count = min(state.crisis_count + 1, self.threshold)
         state.last_crisis_time = now
         state.severity_history.append(severity)
-
-        # Update circuit state
-        if state.crisis_count >= self.threshold:
+        state.severity_history = state.severity_history[-self.threshold:]
+        if severity >= CrisisSeverity.HIGH or state.crisis_count >= self.threshold:
             state.state = CircuitState.OPEN
-        elif (
-            state.state == CircuitState.OPEN
-            and now - state.last_crisis_time > self.recovery
-        ):
-            state.state = CircuitState.HALF_OPEN
-
+            state.post_crisis_latched = self.never_expires
         return state
 
     def get_state(self, user_id: str) -> UserCrisisState:
-        """Get current circuit state for user"""
+        """Apply opt-in recovery; the default permanent latch never decays."""
         if user_id not in self.states:
-            self.states[user_id] = UserCrisisState(user_id=user_id)
-
+            self.states[user_id] = self._new_state(user_id)
         state = self.states[user_id]
-
-        # Check for recovery
-        if state.state == CircuitState.OPEN and state.last_crisis_time:
-            if datetime.now() - state.last_crisis_time > self.recovery:
-                state.state = CircuitState.HALF_OPEN
-
+        if (not state.never_expires and state.state == CircuitState.OPEN
+                and state.last_crisis_time
+                and datetime.now() - state.last_crisis_time >= self.recovery):
+            state.state = CircuitState.HALF_OPEN
+            state.post_crisis_latched = False
+            state.crisis_count = 0
+            state.severity_history.clear()
+            state.window_started_time = None
         return state
 
     def reset(self, user_id: str):
-        """Reset circuit breaker for user"""
+        """Explicit session reset, retaining this breaker's configuration."""
         if user_id in self.states:
-            self.states[user_id] = UserCrisisState(user_id=user_id)
+            self.states[user_id] = self._new_state(user_id)
 
 
 # ============================================================================
@@ -1375,6 +1399,8 @@ class CrisisDetectionSupervisor:
         self.circuit_breaker = CircuitBreaker(
             threshold=self.config.get("circuit_threshold", 3),
             window_seconds=self.config.get("circuit_window", 1800),
+            recovery_seconds=self.config.get("circuit_recovery", 900),
+            never_expires=self.config.get("never_expires", True),
         )
         self.resource_manager = ResourceManager()
         self.analytics = AnalyticsLogger()
@@ -1404,7 +1430,7 @@ class CrisisDetectionSupervisor:
             # Go straight to resources
             return await self._create_crisis_response(
                 user_id=user_id,
-                severity=CrisisSeverity.HIGH,
+                severity=max(user_state.severity_history, key=lambda item: item.level),
                 country_code=country_code,
                 language=language or "en",
                 bypassed=True,
@@ -1414,61 +1440,106 @@ class CrisisDetectionSupervisor:
         cache_key = self.cache_manager.create_key(text, context)
         cached_result = self.cache_manager.get(cache_key)
         if cached_result:
-            await self.analytics.log_detection(user_id, cached_result, text)
-            return self._format_response(cached_result, user_id, country_code, language)
+            return await self._apply_result(
+                cached_result, text, user_id, country_code, language,
+            )
 
-        # Run detection (parallel if ML enabled)
+        # Failed/late peers cannot discard completed positive detections.
         if self.enable_ml:
-            # Run regex and ML in parallel
-            regex_task = asyncio.create_task(self.regex_detector.detect(text, context))
-            ml_task = asyncio.create_task(self.ml_detector.detect(text, context))
-
-            # Wait with timeout
-            try:
-                done, pending = await asyncio.wait(
-                    [regex_task, ml_task], timeout=self.target_latency_ms / 1000
-                )
-
-                # Cancel pending tasks
-                for task in pending:
-                    task.cancel()
-
-                # Get results
-                results = []
-                if regex_task in done:
-                    results.append(await regex_task)
-                if ml_task in done:
-                    results.append(await ml_task)
-
-                # Fuse results
-                final_result = (
-                    self._fuse_results(results)
-                    if results
-                    else self._create_fallback_result()
-                )
-
-            except Exception as e:
-                logger.error(f"Detection error: {e}")
-                final_result = self._create_fallback_result()
+            results, complete = await self._run_detectors(text, context)
+            if not complete:
+                # Unknown detector coverage is not evidence of low risk. Keep
+                # all positive signals and mark the partial result explicitly.
+                results.append(self._create_fallback_result())
+            final_result = self._fuse_results(results)
+            if not complete:
+                final_result.context_modifier = "partial_detection"
         else:
-            # Regex only
             final_result = await self.regex_detector.detect(text, context)
+            complete = True
 
         # Update latency
         final_result.latency_ms = (time.time() - start_time) * 1000
 
-        # Cache result
-        self.cache_manager.set(cache_key, final_result)
+        # Do not reuse a result produced while a detector was unavailable.
+        if complete:
+            self.cache_manager.set(cache_key, final_result)
 
-        # Log analytics
-        await self.analytics.log_detection(user_id, final_result, text)
+        return await self._apply_result(
+            final_result, text, user_id, country_code, language,
+        )
 
-        # Record crisis if detected
-        if final_result.severity >= CrisisSeverity.MODERATE:
-            self.circuit_breaker.record_crisis(user_id, final_result.severity)
+    async def _run_detectors(
+        self, text: str, context: Optional[List[str]],
+    ) -> Tuple[List[CrisisDetectionResult], bool]:
+        """Collect peers independently and drain cooperative cancellation.
 
-        # Format response
-        return self._format_response(final_result, user_id, country_code, language)
+        The detection deadline plus a 50ms cleanup budget bounds waiting on a
+        late peer. Python cannot forcibly terminate cancellation-resistant code;
+        such a task is detached with an exception-consuming callback and its
+        result cannot populate the shared cache.
+        """
+        tasks = [
+            asyncio.create_task(self.regex_detector.detect(text, context)),
+            asyncio.create_task(self.ml_detector.detect(text, context)),
+        ]
+        completed = set()
+        try:
+            completed, _ = await asyncio.wait(
+                tasks, timeout=max(0, self.target_latency_ms) / 1000,
+            )
+        finally:
+            pending = [task for task in tasks if not task.done()]
+            for task in pending:
+                task.cancel()
+            if pending:
+                _, resistant = await asyncio.wait(pending, timeout=0.05)
+                for task in resistant:
+                    task.cancel()
+                    task.add_done_callback(self._consume_task_outcome)
+            # Consume every already-finished exception, including completion
+            # during cancellation cleanup, so no task warning leaks out.
+            for task in tasks:
+                if task.done() and task not in completed:
+                    self._consume_task_outcome(task)
+
+        results = []
+        for task in tasks:
+            if task not in completed or task.cancelled():
+                continue
+            try:
+                result = task.result()
+            except Exception:
+                logger.warning("Crisis detector unavailable; retaining other detector results")
+                continue
+            if not isinstance(result, CrisisDetectionResult):
+                logger.warning("Crisis detector returned invalid result")
+                continue
+            results.append(result)
+        return results, len(results) == len(tasks)
+
+    @staticmethod
+    def _consume_task_outcome(task: asyncio.Task) -> None:
+        if not task.cancelled():
+            task.exception()
+
+    async def _apply_result(
+        self, result: CrisisDetectionResult, text: str, user_id: str,
+        country_code: str, language: Optional[str],
+    ) -> Dict[str, Any]:
+        """Every classification, including cache hits, crosses this boundary."""
+        # Transition before any await so logging cannot prevent the latch.
+        state = self.circuit_breaker.record_crisis(user_id, result.severity)
+        if state.should_bypass_analysis() and not result.requires_resources:
+            # A repeated-MODERATE threshold can require resources without
+            # claiming that the current message was classified HIGH.
+            result = replace(result, requires_resources=True,
+                             recommended_action=RecommendedAction.INTERRUPT)
+        try:
+            await self.analytics.log_detection(user_id, result, text)
+        except Exception:
+            logger.warning("Crisis analytics unavailable; returning safety decision")
+        return self._format_response(result, user_id, country_code, language)
 
     def _fuse_results(
         self, results: List[CrisisDetectionResult]
@@ -1480,8 +1551,9 @@ class CrisisDetectionSupervisor:
         # Get highest severity
         max_severity = max(r.severity for r in results)
 
-        # Get highest confidence
-        max_confidence = max(r.confidence for r in results)
+        # Confidence belongs to the selected severity, not a contradictory
+        # lower-severity detector with a larger uncalibrated score.
+        max_confidence = max(r.confidence for r in results if r.severity == max_severity)
 
         # Combine indicators and categories
         all_indicators = []
@@ -1490,13 +1562,13 @@ class CrisisDetectionSupervisor:
             all_indicators.extend(r.indicators)
             all_categories.update(r.categories)
 
-        # ML override: if ML confidence is very high, trust it even if lower severity
-        ml_results = [r for r in results if "ml" in r.detection_method]
-        if ml_results and ml_results[0].confidence > 0.85:
-            max_severity = ml_results[0].severity
-            reasoning = ml_results[0].reasoning
-        else:
-            reasoning = None
+        # No detector may erase a stronger positive crisis signal. Preserve
+        # provenance for review rather than treating ML confidence as veto power.
+        reasoning = "; ".join(
+            f"{r.detection_method}: {r.severity.label} ({r.confidence:.3f})"
+            + (f"; {r.reasoning}" if r.reasoning else "")
+            for r in results
+        )
 
         # Determine action
         if max_severity >= CrisisSeverity.HIGH:
@@ -1545,9 +1617,12 @@ class CrisisDetectionSupervisor:
 
         return {
             "detection": {
-                "severity": severity.label,
+                # No new text classification was performed on a latched turn.
+                "severity": None if bypassed else severity.label,
+                "prior_severity": severity.label if bypassed else None,
                 "action": RecommendedAction.INTERRUPT.value,
                 "bypassed_analysis": bypassed,
+                "basis": "crisis_history" if bypassed else "current_classification",
             },
             "resources": [
                 {"name": r.name, "phone": r.phone, "text": r.text, "web": r.web}
@@ -1576,6 +1651,7 @@ class CrisisDetectionSupervisor:
                 "latency_ms": result.latency_ms,
                 "cache_hit": result.cache_hit,
                 "method": result.detection_method,
+                "coverage": result.context_modifier or "complete",
             }
         }
 

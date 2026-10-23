@@ -8,9 +8,9 @@ This pattern aligns with research on building effective AI agents: use multiple 
 
 ## Moss Split Safety Architecture
 
-The `wellness_cli` reference app now applies that idea in a narrower, production-oriented way:
+The `wellness_cli` reference app implements a narrower boundary. The supervisor diagrams and pseudocode below describe design examples, not a deployed clinical service:
 
-- **Main conversation safety is local to Moss in Python.** A deterministic wellness safety supervisor runs before provider calls, tracks explicit crisis session state, and screens streamed assistant output before it is rendered.
+- **Main conversation safety is local to Moss in Python.** Inbound checks precede provider calls. A size-bounded buffer withholds the complete assistant reply until policy checking finishes; no partial provider text is released. Normal-mode lexical checks are heuristic and cannot recognize every unsafe meaning. Crisis follow-up uses constrained local responses for the remainder of the session.
 - **PangoClaw is reserved for governed side effects.** It is not the primary turn-by-turn safety layer. Instead, Moss uses the local sidecar's Unix-socket contract for governed actions such as fact extraction, session summarization, profile refinement, onboarding follow-up generation, and plaintext transcript export.
 
 That split keeps the latency-sensitive, user-visible safety boundary inside the app while still giving autonomous side effects an approval and audit trail. The sidecar model is intentionally local-first; if this system later needs shared or production governance, the right path is Glacis Shield rather than stretching the developer-sidecar design.
@@ -230,9 +230,9 @@ if crisis_state_manager.is_in_crisis_mode(session_id):
 
 **Why It Matters:**
 - Safety first - catches multiple expressions of crisis
-- Works across languages
-- State management prevents inappropriate responses after crisis
-- Legal compliance - separates crisis response from therapy
+- Multilingual example patterns require language-specific evaluation
+- State management restricts crisis follow-up; test every state transition and cache path
+- Separation of crisis guidance from therapy is a design boundary, not proof of legal compliance
 
 ---
 
@@ -495,25 +495,27 @@ A: Run supervisors asynchronously. Empathy evaluation can sample (not every conv
 A: Yes, different prompts to same model. But consider specialized models: fast model for crisis detection, powerful model for conversation.
 
 **Q: How do I know if supervisors are working?**  
-A: Track supervisor agreement with human reviewers. If empathy supervisor scores match human ratings, it's working.
+A: Record independent human ratings before model scoring, inspect disagreements and false negatives, and audit representative transcripts. Agreement alone does not establish clinical safety or benefit.
 
 ---
 
 ## Research Foundation
 
-This architecture aligns with:
-- **Anthropic's "Building Effective Agents"**: Orchestrator-supervisor pattern
-- **Constitutional AI**: Multiple oversight mechanisms
-- **ReAct pattern**: Observation (supervisors) → Action (response) loop
+These sources motivate requirements; they do not validate Moss as treatment or establish universal numerical thresholds:
 
----
+- [Chandra et al., 2026](https://arxiv.org/abs/2602.19141): Bayesian modeling and simulation of sycophancy and belief escalation.
+- [Kosmyna et al., 2025](https://arxiv.org/abs/2506.08872): essay-writing EEG study; transfer to wellness sequencing is a design hypothesis.
+- [Stamatis et al., v2, August 2026](https://arxiv.org/abs/2601.17003): benchmarks plus an ecological audit of 20,000 conversations. The original study reported higher test-set suicide/NSSI failure rates than deployment. Sampling and denominators differ; there is no universal conversion multiplier.
+- [Baldo et al., v2, October 2026](https://arxiv.org/abs/2608.21325): a ten-move ontology and inference-time steering toward a human behavioral baseline, not a clinical-outcome guarantee.
 
-## Next Steps
+## Five Pillars for Responsible AI Deployment at Scale (v1.2)
 
-1. Start with Level 1 (main prompts only)
-2. Add crisis detection when ready for real users
-3. Add empathy evaluation for quality tracking
-4. Implement tone adaptation for personalization
-5. Build feedback loops for continuous improvement
+| Pillar | Requirement | Implementation and limits |
+| --- | --- | --- |
+| **1. Affective & Incentive Alignment** | Acknowledge feelings without confirming unsupported beliefs; do not optimize retention. Keep qualifying crisis state through the session. | SOUL/AGENTS express the distinction; normalized lexical checks are tripwires, not complete semantic enforcement. The CLI crisis latch constrains follow-up to local responses. The example circuit defaults to non-expiring state; its explicit recovery option is separate from the CLI policy. No session-length or return-rate success target. |
+| **2. Human-First, Model-Second** | Elicit missing user framing before synthesis, except immediate crisis guidance. Require reviewer commitment before exposing machine scores. | Prompts define this sequence; no claim that prompting proves compliance or prevents deskilling. The evaluation API validates commitments and score schemas; a scorer must be supplied explicitly, and model scores are not independent clinical review. |
+| **3. Pipeline & Apprenticeship Preservation** | Build review work around transcript sampling, independent annotation, adjudication, and AI-off calibration. | Evaluation helpers support structured review records and release eligibility. A real consented, representative audit and trained reviewers must still be supplied; fixtures do not establish population safety or workforce outcomes. |
+| **4. Epistemic Rigor & Ablation** | Pair the full prompt with a minimal prompt on the same model/settings; keep raw-model and runtime comparisons separate. | The red-team harness labels prompt arms and assessment mode. These comparisons can estimate prompt behavior differences, not isolate provider pretraining or establish clinical effectiveness. Missing human or ecological evidence blocks release eligibility. |
+| **5. Runtime Assurance** | Check before display, retain complete response context, and record every completed or interrupted turn's outcome. | `StreamSafetyBuffer` holds the bounded complete reply. `SafetyAttestationReceipt` is a local decision/content record, not independent attestation of clinical safety. Hashes and local persistence do not prove honest enforcement, external provenance, or capture outside the instrumented path. |
 
-See `examples/` for working code to adapt.
+The policies above are engineering requirements. Research findings, automated test results, human audit judgments, and clinical outcomes must remain separately reported.

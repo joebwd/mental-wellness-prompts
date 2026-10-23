@@ -192,7 +192,7 @@ Once running, these slash commands are available:
 
 Moss now uses a deliberate split:
 
-- **Conversational safety stays inside Moss in Python.** `wellness_cli/safety_supervisor.py` classifies inbound user text, tracks session-level crisis state, and screens streamed assistant output before it reaches the terminal.
+- **Conversational safety stays inside Moss in Python.** `wellness_cli/safety_supervisor.py` checks inbound text, tracks crisis state, and withholds each complete, size-bounded assistant reply until checking finishes. Replies therefore appear after completion rather than token by token. Normal-mode lexical checks remain heuristic.
 - **PangoClaw is only for governed side effects.** It does not sit in front of every conversation turn. It policy-checks and audits autonomous actions such as fact extraction, session summarization, profile refinement, onboarding follow-up generation, and plaintext transcript export.
 
 That split matters. The main conversation path needs deterministic, low-latency wellness rules close to the UI and provider stream. Side effects need approval, auditability, and fail-closed behavior.
@@ -203,11 +203,11 @@ The Python supervisor does not call a local CLI LLM. It is local rule code plus 
 
 On first run, the companion asks 5 starter questions plus up to 2 AI-generated follow-ups based on your answers. From these, it builds two files for the unlocked runtime session:
 
-- **SOUL.md** — Who the companion is and how it relates to you. Under 350 words. Includes your name, situation, what helps, what doesn't, and an auto-detected communication style (brief vs verbose, warm vs direct, experienced vs new to this).
+- **SOUL.md** — Who the companion is and how it relates to you. Strictly under 350 whitespace-delimited words. Includes bounded, quoted excerpts of your name, situation, what helps, what doesn't, and an auto-detected communication style (brief vs verbose, warm vs direct, experienced vs new to this).
 
 - **AGENTS.md** — Operational rules. Response length limits, memory usage, crisis protocol, escalation triggers, formatting rules.
 
-They stay human-readable while the app is running, and the underlying profile data is persisted inside the encrypted vault. The soul profile refines itself after each conversation based on what it learns.
+They stay human-readable while the app is running. The word budget shortens prompt excerpts, not the underlying profile data persisted inside the encrypted vault. The soul profile refines itself after each conversation based on what it learns.
 
 ### Memory
 
@@ -220,11 +220,15 @@ The companion remembers across sessions:
 
 ### Crisis Detection
 
-Client-side regex patterns (sub-1ms) still scan every message for crisis language across direct and indirect indicators. False-positive filtering catches idioms like "killing it" or "to die for." When triggered, crisis resources appear immediately in a high-visibility alert panel.
+Local pattern checks scan messages for direct and indirect crisis indicators. Idiom exclusions are scoped to their phrase so a separate crisis disclosure is not cancelled by words such as “joke.” Detection is heuristic and may still miss unfamiliar wording. When triggered, local crisis resources are shown without a provider call.
 
 The companion does **not** attempt crisis intervention. It provides resources and stays present.
 
-After a crisis turn, Moss keeps the session in a stricter follow-up state. In that mode, the Python supervisor blocks unsafe drift such as diagnosis, medication advice, dependency framing, prompt leakage, tool syntax, and crisis-assessment language before it reaches the terminal.
+After a qualifying crisis turn, `CrisisStage.CRISIS_FOLLOWUP` remains active for the rest of the session, regardless of turns or elapsed minutes. Follow-up is constrained to local resource-oriented replies rather than open-ended model interpretation. Starting a new conversation resets session state; this is not clinical clearance or a cross-session safety guarantee.
+
+The complete-response buffer enforces a size limit and never releases an unchecked prefix. In normal mode, checks cover known forms of medication advice, diagnosis, dependency, premise validation, prompt leakage, and tool syntax; this does not amount to complete semantic detection.
+
+`SafetyAttestationReceipt` records local policy decisions and content hashes, with turn outcomes distinguishing normal responses, overrides, rejections, and interruptions. These are local integrity and trace records. They do not independently authenticate enforcement or demonstrate clinical correctness, capture outside this path, or patient benefit.
 
 ### Running With Or Without PangoClaw
 

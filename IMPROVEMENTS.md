@@ -51,14 +51,14 @@ Not explicitly addressed.
 ```markdown
 ### Core Behaviors
 
-**CRITICAL: Provide Value First**
-When users ask broad questions ("How can I be less anxious?"), provide immediate value by sharing insights, techniques, or perspectives FIRST, then ask clarifying questions if genuinely needed.
+**CRITICAL: Acknowledge, Then Build on the User's Framing**
+When a broad request lacks the person's own framing, acknowledge the feeling and ask one brief question about what they have noticed or considered. Offer interpretations or techniques after that framing. If the person already supplied it, build on it without making them repeat themselves. Initial value is attentive acknowledgment, not an unsolicited AI explanation.
 
-**NEVER use this pattern:** "Before I answer X, could you tell me Y?"
+Do not make help conditional on answering or use the phrase "Before I can help...". Crisis response overrides this sequence: provide live support promptly without a framing question, risk assessment, or therapeutic exercise.
 
 Examples:
-- BAD: "Before I can help with anxiety, could you tell me what triggers it?"
-- GOOD: "Anxiety often eases when we focus on what we can control. One technique is 4-7-8 breathing. What tends to trigger your anxiety most?"
+- Broad request: "Feeling anxious can be exhausting. What have you noticed about when it shows up?"
+- Framing already supplied: "You noticed it builds before meetings. We can start with that pattern and one practical next step."
 ```
 
 **Rationale:** This pattern tested as evasive and created conversation friction. Explicitly banned in August 2025 after user feedback indicated frustration with excessive clarification-seeking.
@@ -276,7 +276,16 @@ See TESTING.md for complete test suite.
 
 ## Version History
 
-### v1.1 (November 2025) - Current Release
+### v1.2 (October 2026) — Safety and Evaluation Update
+
+- **Runtime boundary:** Bound and withhold complete provider replies before policy checking/display; preserve crisis restrictions through the session. Normal-mode lexical detection remains heuristic.
+- **Prompt contract:** Generate SOUL below 350 words without truncating safety policy; quote and budget profile excerpts. Acknowledge feelings, elicit missing user framing, then synthesize. Immediate crisis guidance takes priority.
+- **Evaluation:** Validate reviewer commitments before scoring, separate raw-model checks from runtime behavior, and compare full versus minimal prompt arms. Structured transcript review, adjudication, and AI-off calibration support release eligibility; no clinical audit results are implied by this tooling.
+- **Incentives:** Remove retention/session-length targets and supersede historical claims that longer sessions or repeat visits establish usefulness.
+- **Evidence records:** Record local decisions and emitted-content hashes with completion status. Receipts do not independently attest clinical safety or completeness.
+- **Research accuracy:** Treat the delusional-spiraling paper as modeling/simulation and the MIT EEG study as task-specific. Correct the ecological-audit summary to 20,000 conversations with different benchmark/deployment sampling; remove the unsupported failure multiplier. See [ARCHITECTURE.md](ARCHITECTURE.md) for source links and limits.
+
+### v1.1 (November 2025)
 Based on 12+ months of testing and refinement:
 - Brevity enforcement moved to top with CRITICAL flags
 - Explicit ban on "Before I answer..." pattern
@@ -288,7 +297,7 @@ Based on 12+ months of testing and refinement:
 
 See EVOLUTION.md for detailed rationale behind each change.
 
-Note: This is the first public release. Internal development at Yara AI spanned October 2024-October 2025.
+Note: Initial public release was v1.1 (November 2025) following internal development at Yara AI (October 2024–October 2025).
 
 ---
 

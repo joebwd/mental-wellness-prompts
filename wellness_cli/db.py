@@ -148,6 +148,15 @@ class WellnessDB:
                     created_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS safety_receipts (
+                    receipt_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    turn_id TEXT NOT NULL,
+                    message_id INTEGER,
+                    payload_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_safety_session ON safety_receipts(session_id, turn_id);
+
                 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
                 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_mood_timestamp ON mood_entries(timestamp);
@@ -168,6 +177,40 @@ class WellnessDB:
             )
             self.conn.commit()
             return cur.lastrowid
+
+    def save_safety_receipt(self, payload: Dict[str, Any]):
+        """Persist a local trace in the same vault as conversation data."""
+        with self._lock, self.conn:
+            self._insert_safety_receipt(payload)
+
+    def _insert_safety_receipt(self, payload: Dict[str, Any], message_id=None):
+        self.conn.execute(
+            "INSERT INTO safety_receipts VALUES (?, ?, ?, ?, ?)",
+            (payload["receipt_id"], payload["session_id"], payload["turn_id"],
+             message_id, json.dumps(payload, sort_keys=True)),
+        )
+
+    def save_message_with_receipts(self, msg: Message, receipts: List[Dict[str, Any]]) -> int:
+        """Atomically commit the exact reply and its delivery/terminal traces."""
+        with self._lock, self.conn:
+            cur = self.conn.execute(
+                """INSERT INTO messages
+                   (session_id, role, content, timestamp, crisis_flag, mood_score)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (msg.session_id, msg.role, msg.content, msg.timestamp, msg.crisis_flag, msg.mood_score),
+            )
+            message_id = cur.lastrowid
+            for receipt in receipts:
+                self._insert_safety_receipt(receipt, message_id)
+            return message_id
+
+    def get_safety_receipts(self, session_id: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT message_id, payload_json FROM safety_receipts WHERE session_id = ? ORDER BY rowid",
+                (session_id,),
+            ).fetchall()
+            return [dict(json.loads(row["payload_json"]), message_id=row["message_id"]) for row in rows]
 
     def get_session_messages(self, session_id: str) -> List[Message]:
         with self._lock:

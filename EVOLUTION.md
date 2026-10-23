@@ -10,7 +10,7 @@ This document explains what went wrong, what we tried, and what actually worked.
 
 ---
 
-## Problem 1: AI's Natural Verbosity Kills Engagement
+## Problem 1: Excessive Verbosity Buries Useful Support
 
 ### What Happened
 Initial conversations averaged 150+ words per response. Users disengaged after 8-10 minutes. The AI would write paragraphs when sentences were needed.
@@ -32,7 +32,7 @@ Keep responses brief (2-3 sentences typically)
 2. Flagged with "CRITICAL" or "IMPORTANT"
 3. Repeated if necessary
 
-**Impact:** Engagement increased to 15+ minutes when responses stayed conversational.
+**Historical observation:** Sessions became longer. The former engagement-success interpretation is superseded: duration is not a benefit or retention target. Judge usefulness by the person’s own goals and ability to close the conversation naturally.
 
 ### How to Test
 ```python
@@ -71,13 +71,14 @@ We tracked this pattern across hundreds of conversations. Users wanted **immedia
 
 ### What Actually Worked
 ```
-CRITICAL: When asked broad questions, provide immediate value 
-by sharing insights FIRST, then ask clarifying questions if needed.
+CRITICAL: Acknowledge the feeling. If the user has not supplied their framing,
+ask one brief question before AI interpretation or techniques.
+Crisis resource guidance overrides this sequence.
 
 NEVER use the pattern: "Before I answer X, could you tell me Y?"
 ```
 
-**Principle:** Validate through engagement, not interrogation.
+**Current principle:** Acknowledge emotion without endorsing premises. Build on the user’s framing without interrogation.
 
 ### How to Test
 ```python
@@ -89,9 +90,8 @@ user: "How can I be less anxious?"
 more about when you feel most anxious?"
 
 # PASS:
-"Anxiety often eases when we focus on what we can actually control. 
-One technique that helps many people is 4-7-8 breathing - breathe 
-in for 4, hold for 7, out for 8. What tends to trigger your anxiety most?"
+"Feeling anxious can be exhausting. What have you noticed about
+when it shows up?"
 ```
 
 ---
@@ -340,6 +340,30 @@ Monitor these weekly:
 - [ ] Therapy jargon appearing in responses
 - [ ] Markdown formatting showing up
 - [ ] Users describing interactions as "clinical" or "robotic"
+- [ ] Validation ratio exceeding ~70% while grounding/regulation moves drop below 15%
+- [ ] Model validating ungrounded, persecutory, or conspiratorial user premises
+- [ ] Heightened crisis guardrails timing out after $N$ turns while keeping the user in-app
+
+---
+
+## Phase 6: Research-Informed Design and Explicit Limits (v1.2)
+
+The following sources motivate engineering choices. They use different populations, tasks, measures, and study designs; they do not form a single empirical demonstration that Moss is safe or effective. Earlier developer observations in this document are historical, unaudited reports rather than current product outcome evidence.
+
+### Affective acknowledgment without premise validation
+[Chandra et al. (2026)](https://arxiv.org/abs/2602.19141) use Bayesian modeling and simulation to study how sycophancy can amplify false beliefs, including without false factual claims. This motivates separating acknowledgment of distress from agreement with a premise. It does not establish a clinical effect size or validate a keyword detector. Moss's normal-mode lexical checks remain incomplete; crisis follow-up uses constrained local responses.
+
+### Human framing and independent review
+[Your Brain on ChatGPT (Kosmyna et al., 2025)](https://arxiv.org/abs/2506.08872) studies essay writing, with 54 participants in the first three sessions and 18 in the crossover session. Its EEG and recall results motivate testing human-first workflows. Applying that idea to wellness dialogue or clinician review is a design hypothesis, not demonstrated prevention of cognitive debt or deskilling. Prompts request user framing before synthesis; evaluation requires independent ratings before exposing machine scores.
+
+### Ecological auditing complements controlled tests
+[Beyond Simulations (Stamatis et al., v2, August 2026)](https://arxiv.org/abs/2601.17003) combines benchmark comparisons with an audit of 20,000 deployment conversations, collected in two batches of 10,000, and a blinded random sample. The [original version](https://arxiv.org/abs/2601.17003v1) reports higher test-set suicide/NSSI failure rates than deployment. It does not support the previously stated universal multiplier of missed failures. Conditional audit rates and population estimates need their own denominators and uncertainty. Moss has no equivalent population outcome result merely because its test harness can import transcripts.
+
+### Observable behavior before outcome claims
+[Move by Move (Baldo et al., v2, October 2026)](https://arxiv.org/abs/2608.21325) introduces a ten-move ontology and uses callable categories to steer model behavior toward a human clinical baseline. Similarity of conversational moves is not itself proof of patient benefit. Moss's segment annotations measure declared behaviors; a real deployment needs calibrated reviewers, representative sampling, disagreement resolution, and explicit release criteria.
+
+### Runtime records and release discipline
+Every prompt or model change requires regression checks and paired full-prompt/minimal-prompt evaluation with runtime enforcement held constant within each comparison. Store human commitments, adjudications, and AI-off calibration separately from model scores. Neither a high score nor a local receipt certifies clinical safety. Receipts bind local decisions and emitted text to an instrumented turn; independent provenance, complete capture, clinical correctness, and outcomes require additional evidence. Session length and return rate are not success targets.
 
 ---
 

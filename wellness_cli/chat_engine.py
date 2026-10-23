@@ -12,6 +12,8 @@ Handles:
 """
 
 import json
+import uuid
+from dataclasses import asdict, replace
 import threading
 from datetime import datetime, timezone
 from typing import Dict, Generator, List, Optional
@@ -19,7 +21,11 @@ from typing import Dict, Generator, List, Optional
 from .db import WellnessDB, Message
 from .memory import MemoryStore
 from .providers import Provider
-from .safety_supervisor import SafetySupervisor, WellnessSafetySupervisor, detect_crisis
+from .safety_supervisor import (
+    SafetySupervisor, WellnessSafetySupervisor, detect_crisis,
+    SafetyAttestationReceipt, build_attestation_receipt,
+    GENERAL_OUTPUT_FALLBACK, MAX_OUTPUT_CHARS,
+)
 
 
 # ── Fallback System Prompt (used when no soul profile exists) ─────────
@@ -44,11 +50,11 @@ No markdown formatting. No bullet points. Plain text, like a real conversation.
 
 ## Boundaries
 
-I do not diagnose, prescribe, or treat. I do not suggest stopping medications. I redirect clinical concerns to professionals. If someone is in crisis, I provide resources and step aside for the professionals.
+I do not diagnose, prescribe, or treat. I do not suggest stopping medications. I do not pretend to be human, and I never try to replace real-world relationships or keep someone talking longer than they need. I redirect clinical concerns to professionals. If someone is in crisis, I provide resources and step aside for the professionals.
 
 ## What I Am Not
 
-Not sycophantic. Not performatively empathetic. Not a worksheet. Not a mirror that only reflects back what someone says. I have a point of view — I will gently challenge when it might help — but I never push.
+Not sycophantic. Not performatively empathetic. Not a worksheet. Not a mirror that only reflects back what someone says. I separate feelings from premises: I acknowledge emotional pain without validating ungrounded or self-destructive beliefs. If their framing is missing, I ask for their own read before offering mine — I will gently challenge when it might help, but I never push.
 
 Not a coding assistant. Not Claude Code. I have NO tools. I do not generate <tool_call> tags, JSON tool invocations, or any tool-use syntax. I do not explore directories, read files, or search codebases. I respond conversationally only — plain text, nothing else.
 """.strip()
@@ -81,9 +87,20 @@ class ChatEngine:
         self._provider_turn_count = 0
         self._provider_synced_message_count = 0
         self._cancel_response = threading.Event()
+        self._send_lock = threading.Lock()
+        self._audit_lock = threading.RLock()
+        self._active_turn = False
+        self._turn_finalized = True
+        self._turn_id = ""
+        self._turn_enforced = False
+        self.last_turn_receipts: List[SafetyAttestationReceipt] = []
 
     def start_session(self, session_id: str):
         """Begin a new conversation session."""
+        if self._active_turn:
+            raise RuntimeError("cannot switch sessions during a response")
+        if self.session_id == session_id:
+            return  # Idempotent: the same in-session latch cannot be cleared.
         self.session_id = session_id
         self.provider.new_session()
         self.messages = []
@@ -94,7 +111,63 @@ class ChatEngine:
 
     def cancel_pending_response(self):
         """Request cancellation for an in-flight streamed response."""
-        self._cancel_response.set()
+        with self._audit_lock:
+            self._cancel_response.set()
+            if self._active_turn and not self._turn_finalized:
+                self._finish_without_output("cancelled")
+
+    def _trace(self, *, direction="outbound_assistant", allowed=True,
+               reason_codes=(), content="", event_type="assessment", status="checked"):
+        return build_attestation_receipt(
+            direction=direction, stage=self.safety.crisis_state.stage,
+            allowed=allowed, reason_codes=reason_codes, content=content,
+            system2_enforced=self._turn_enforced, session_id=self.session_id or "",
+            turn_id=self._turn_id, event_type=event_type, completion_status=status,
+        )
+
+    def _remember_trace(self, receipt):
+        self.last_turn_receipts.append(receipt)
+        record = getattr(self.safety, "record_event", None)
+        # Assessments already belong to the supervisor; don't duplicate them.
+        if callable(record) and receipt.event_type != "assessment":
+            record(receipt)
+
+    def _save_assessment(self, receipt, *, content, direction, allowed, reasons=()):
+        if receipt is None:
+            receipt = self._trace(direction=direction, allowed=allowed,
+                                  content=content, reason_codes=reasons)
+        else:
+            receipt = replace(receipt, session_id=self.session_id or "", turn_id=self._turn_id)
+        self.db.save_safety_receipt(asdict(receipt))
+        self._remember_trace(receipt)
+
+    def _finish_without_output(self, status):
+        # Called under the audit lock, including synchronously on cancellation
+        # before a caller may close the database. Never write after finalization.
+        if self._turn_finalized:
+            return
+        receipt = self._trace(allowed=False, event_type="turn_end", status=status,
+                              reason_codes=(status,))
+        self.db.save_safety_receipt(asdict(receipt))
+        self._remember_trace(receipt)
+        self._turn_finalized = True
+
+    def _commit_response(self, content, status, reasons=()):
+        content = content.strip()
+        if not content:
+            self._finish_without_output("empty")
+            return ""
+        if self._cancel_response.is_set() or self._turn_finalized:
+            return ""
+        emission = self._trace(content=content, event_type="emission", status=status,
+                               reason_codes=reasons)
+        terminal = self._trace(content=content, event_type="turn_end", status=status,
+                               reason_codes=reasons)
+        self._store_assistant_message(content, receipts=[asdict(emission), asdict(terminal)])
+        self._remember_trace(emission)
+        self._remember_trace(terminal)
+        self._turn_finalized = True
+        return content
 
     def _safe_memory_context(self, user_message: str) -> str:
         try:
@@ -165,7 +238,7 @@ class ChatEngine:
         prompt = "\n\n".join(part for part in parts if part.strip()).strip()
         return prompt or FALLBACK_SYSTEM_PROMPT
 
-    def _store_assistant_message(self, content: str):
+    def _store_assistant_message(self, content: str, receipts=None):
         clean = content.strip()
         resp_msg = Message(
             id=None,
@@ -175,7 +248,7 @@ class ChatEngine:
             timestamp=datetime.now(timezone.utc).isoformat(),
             crisis_flag=self.safety.is_crisis_active,
         )
-        resp_id = self.db.save_message(resp_msg)
+        resp_id = self.db.save_message_with_receipts(resp_msg, receipts or [])
         self._safe_index_message(resp_id, "assistant", clean, resp_msg.timestamp)
         self.messages.append({"role": "assistant", "content": clean})
         self.safety.complete_assistant_turn()
@@ -191,89 +264,134 @@ class ChatEngine:
         self._provider_synced_message_count = 0
 
     def send_message(self, user_text: str) -> Generator[str, None, None]:
-        """Send a user message and yield streamed response chunks."""
-        self._cancel_response.clear()
-        now = datetime.now(timezone.utc).isoformat()
-        inbound = self.safety.begin_turn(user_text)
+        """Check the complete response, commit exact delivery bytes, then yield once.
 
-        msg = Message(
-            id=None,
-            session_id=self.session_id,
-            role="user",
-            content=user_text,
-            timestamp=now,
-            crisis_flag=inbound.crisis_detected,
-        )
-        msg_id = self.db.save_message(msg)
-        self._safe_index_message(msg_id, "user", user_text, now)
-        self.messages.append({"role": "user", "content": user_text})
-
-        if inbound.override_response:
-            safe_text = inbound.override_response.strip()
-            yield safe_text
-            self._store_assistant_message(safe_text)
-            return
-
-        system = self._build_system_prompt(user_text)
-
-        full_response = ""
-        blocked_by_safety = False
-        provider_stream = self.provider.stream_response(user_text, system, self._provider_turn_count)
-        stream_buffer = self.safety.new_stream_buffer()
+        A committed emission records delivery to this API's caller. It cannot
+        prove that a terminal or downstream UI rendered the text.
+        """
+        if not self._send_lock.acquire(blocking=False):
+            raise RuntimeError("another response is already active")
+        provider_stream = None
         try:
+            with self._audit_lock:
+                self._cancel_response.clear()
+                self._active_turn = True
+                self._turn_finalized = False
+                self._turn_id = uuid.uuid4().hex
+                self._turn_enforced = False
+                self.last_turn_receipts = []
+                context = getattr(self.safety, "set_context", None)
+                if callable(context):
+                    context(self.session_id or "", self._turn_id)
+                inbound = self.safety.begin_turn(user_text)
+                self._turn_enforced = bool(inbound.receipt and inbound.receipt.system2_enforced)
+                self._save_assessment(inbound.receipt, content=user_text, direction="inbound_user",
+                                      allowed=inbound.allow_provider, reasons=inbound.reason_codes)
+                now = datetime.now(timezone.utc).isoformat()
+                msg = Message(None, self.session_id, "user", user_text, now, inbound.crisis_detected)
+                msg_id = self.db.save_message(msg)
+                self._safe_index_message(msg_id, "user", user_text, now)
+                self.messages.append({"role": "user", "content": user_text})
+                if not inbound.allow_provider or inbound.override_response:
+                    response = self._commit_response(
+                        inbound.override_response or GENERAL_OUTPUT_FALLBACK,
+                        "local_override", inbound.reason_codes,
+                    )
+                else:
+                    response = None
+            if response is not None:
+                if response:
+                    yield response
+                return
+
+            system = self._build_system_prompt(user_text)
+            if self._cancel_response.is_set():
+                return
+            provider_stream = self.provider.stream_response(user_text, system, self._provider_turn_count)
+            stream_buffer = self.safety.new_stream_buffer()
+            collected = []  # Also holds custom/NoOp output until the shared commit boundary.
+            collected_length = 0
+            blocked = False
+            reasons = ()
+            result = None
             for chunk in provider_stream:
                 if self._cancel_response.is_set():
                     return
-
-                stream_result = stream_buffer.push(chunk)
-                if stream_result.blocked:
-                    blocked_by_safety = True
-                    self._cancel_response.set()
-                    fallback = (stream_result.safe_fallback or "").strip()
-                    if fallback:
-                        emitted = f"\n\n{fallback}" if full_response else fallback
-                        full_response = (full_response + emitted).strip()
-                        yield emitted
+                result = stream_buffer.push(chunk)
+                with self._audit_lock:
+                    if self._turn_finalized:
+                        return
+                    if result.receipt:
+                        self._save_assessment(result.receipt, content="", direction="outbound_assistant",
+                                              allowed=not result.blocked, reasons=result.reason_codes)
+                if result.blocked:
+                    blocked = True
+                    reasons = result.reason_codes
+                    collected = [result.safe_fallback or GENERAL_OUTPUT_FALLBACK]
                     break
-
-                if stream_result.released_text:
-                    full_response += stream_result.released_text
-                    yield stream_result.released_text
-        finally:
-            close_stream = getattr(provider_stream, "close", None)
-            if callable(close_stream):
-                try:
-                    close_stream()
-                except Exception:
-                    pass
-
-        if self._cancel_response.is_set() and not blocked_by_safety:
-            return
-
-        if not blocked_by_safety:
-            stream_result = stream_buffer.finish()
-            if stream_result.blocked:
-                blocked_by_safety = True
-                fallback = (stream_result.safe_fallback or "").strip()
-                if fallback:
-                    emitted = f"\n\n{fallback}" if full_response else fallback
-                    full_response = (full_response + emitted).strip()
-                    yield emitted
-            elif stream_result.released_text:
-                full_response += stream_result.released_text
-                yield stream_result.released_text
-
-        if not full_response.strip():
-            return
-
-        self._store_assistant_message(full_response)
-
-        if blocked_by_safety:
+                if result.released_text:
+                    collected_length += len(result.released_text)
+                    if collected_length > MAX_OUTPUT_CHARS:
+                        raise ValueError("custom supervisor output exceeds response limit")
+                    collected.append(result.released_text)
+            if not blocked:
+                if self._cancel_response.is_set():
+                    return
+                result = stream_buffer.finish()
+                with self._audit_lock:
+                    if self._turn_finalized:
+                        return
+                    self._save_assessment(result.receipt, content="".join(collected) + result.released_text,
+                                          direction="outbound_assistant", allowed=not result.blocked,
+                                          reasons=result.reason_codes)
+                blocked = result.blocked
+                reasons = result.reason_codes
+                if blocked:
+                    collected = [result.safe_fallback or GENERAL_OUTPUT_FALLBACK]
+                else:
+                    collected.append(result.released_text)
+            response = "".join(collected)
+            close = getattr(provider_stream, "close", None)
+            if callable(close):
+                close()
+            with self._audit_lock:
+                if self._turn_finalized:
+                    return
+                response = self._commit_response(response, "blocked_replaced" if blocked else "completed", reasons)
+                if blocked:
+                    self._reset_provider_session()
+                elif response:
+                    self._provider_turn_count += 1
+                    self._provider_synced_message_count = len(self.messages)
+            if response:
+                yield response
+        except GeneratorExit:
+            with self._audit_lock:
+                self._finish_without_output("cancelled")
+            raise
+        except BaseException:
+            with self._audit_lock:
+                self._finish_without_output("error")
             self._reset_provider_session()
-            return
-
-        self._provider_turn_count += 1
-        self._provider_synced_message_count = len(self.messages)
+            raise
+        finally:
+            if provider_stream is not None:
+                close = getattr(provider_stream, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:
+                        pass
+            try:
+                with self._audit_lock:
+                    self._finish_without_output("cancelled" if self._cancel_response.is_set() else "empty")
+                if provider_stream is not None and self.last_turn_receipts and self.last_turn_receipts[-1].completion_status in {"cancelled", "empty"}:
+                    # Reset only after closing the stream: a provider may append
+                    # a completed but unassessed response to its own history.
+                    self._reset_provider_session()
+            finally:
+                self._active_turn = False
+                self._send_lock.release()
 
     @property
     def is_crisis_active(self) -> bool:

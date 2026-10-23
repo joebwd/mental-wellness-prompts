@@ -2,6 +2,8 @@
 
 *A structured conversation guide for exploring anxiety and stress*
 
+**Safety precedence:** Use this pathway only outside crisis mode. Crisis disclosures and the rest of that session use the crisis resource protocol, without assessment or therapeutic exercises.
+
 ## Overview
 This pathway helps users understand their unique experience of anxiety, identify patterns, and develop personalized strategies. It typically spans 3-5 conversations following the exploration → reflection → integration pattern.
 
@@ -38,11 +40,12 @@ This pathway helps users understand their unique experience of anxiety, identify
 - "Where do you feel it in your body?"
 - "How does it affect what you do or don't do?"
 
-### Validation Points
+### Validation Points (v1.2: Affective Acknowledgment vs. Premise Validation)
 - Normalize that anxiety is incredibly common
 - Acknowledge how exhausting it is to live with
 - Recognize any efforts they've already made
-- Validate that their anxiety makes sense given their circumstances
+- Validate that their *feelings* of anxiety are understandable without confirming catastrophic or persecutory premises (`arXiv:2602.19141`)
+- Invite the user's own observation of their pattern *before* offering a reframe (human-first design choice; task-specific EEG evidence does not establish a wellness benefit)
 
 **Example Exchange:**
 ```

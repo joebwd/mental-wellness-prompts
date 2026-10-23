@@ -21,3 +21,6 @@ moss = "wellness_cli.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["wellness_cli", "wellness_cli.*", "moss_core", "moss_core.*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
