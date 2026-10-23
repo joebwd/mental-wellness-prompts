@@ -204,25 +204,18 @@ These templates are grounded in 12+ months of systematic development and real-wo
 
 **[ARCHITECTURE.md](ARCHITECTURE.md)** - Multi-agent supervisor patterns with working Python code
 
-**[examples/](examples/)** - Production-ready code including multi-tier crisis detection (100+ patterns, 10 languages, 29 countries), quality evaluation, and tone detection
+**[examples/](examples/)** - Reference implementations for crisis detection, quality evaluation, and tone detection. Some model components are mocks; these examples require validation for the intended deployment.
 
 ### Quick Validation
 
-```python
-# 5 core compliance tests
-[x] Brevity (responses < 60 words)
-[x] No therapy jargon
-[x] No "Before I answer..." pattern
-[x] Crisis detection working
-[x] No markdown formatting
-```
+Run the automated suite and review the version-specific report; a checklist is not evidence that these properties hold universally. Cover response length, jargon, framing sequence, crisis/state transitions, output containment, and receipt completeness. [TESTING.md](TESTING.md) documents automated checks and separate human review gates.
 
 ### Key Insights
 
-- **Regulatory compliance matters**: Illinois HB1806 (Aug 2025) banned AI therapy - jargon avoidance is now legally prudent
+- **Scope and oversight matter**: Plain language does not establish regulatory compliance or make an automated service qualified to deliver therapy
 - **AI needs aggressive constraints**: Brevity and clarity rules must be at the top with CRITICAL flags
-- **Testing prevents drift**: Automated validation catches issues before they affect users
-- **Crisis detection is production-ready**: Multi-tier system with regex (sub-1ms), ML screening, false-positive filtering, circuit breakers, and comprehensive resource database
+- **Testing detects covered regressions**: Automated checks need representative human review and version-specific evidence
+- **Crisis detection is a reference implementation**: The CLI uses bounded local rules and session state. The multi-tier example includes placeholder model behavior and has no demonstrated population-level recall or clinical effectiveness.
 
 ### Contributing
 
@@ -252,6 +245,13 @@ We welcome contributions that enhance safety, share implementation learnings, or
 - American Psychological Association: apa.org
 - World Health Organization Mental Health: who.int/health-topics/mental-health
 - National Institute of Mental Health: nimh.nih.gov
+- **2025–2026 research informing v1.2:**
+  - [Sycophantic Chatbots Cause Delusional Spiraling](https://arxiv.org/abs/2602.19141): Bayesian modeling and simulation, not a human clinical experiment.
+  - [Your Brain on ChatGPT](https://arxiv.org/abs/2506.08872): task-specific essay-writing EEG evidence; human-first wellness sequencing remains a design hypothesis.
+  - [Beyond Simulations](https://arxiv.org/abs/2601.17003): an ecological audit of 20,000 deployment conversations alongside benchmarks. Neither its sample size nor its findings automatically transfer to Moss.
+  - [Move by Move](https://arxiv.org/abs/2608.21325): categorizing and steering conversational moves, distinct from establishing patient benefit.
+
+The normal-mode detector remains heuristic. Complete-response buffering prevents chunk-boundary release bypasses, while crisis follow-up uses constrained local replies. Local receipts record decisions and content; they do not certify clinical safety. The minimal-prompt comparison uses the provider’s trained model, not a pretrained checkpoint. See [TESTING.md](TESTING.md) for automated checks and the separate human evidence required for release eligibility.
 
 ### Implementation
 - Consider partnering with local mental health organizations
@@ -271,4 +271,4 @@ Mental wellness support should be accessible to everyone. These templates aim to
 
 *For urgent mental health needs, always direct to professional services and crisis resources.*
 
-**Version 1.1** | November 2025 | Released under MIT License | In memory of Chris Paley-Smith and all those fighting for mental wellness and positivity 🧡
+**Version 1.2** | October 2026 | Released under MIT License | In memory of Chris Paley-Smith and all those fighting for mental wellness and positivity 🧡

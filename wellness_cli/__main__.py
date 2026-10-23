@@ -395,7 +395,7 @@ def _run_setup():
             pass
     if cwd is None:
         import tempfile
-        cwd = os.path.join(tempfile.gettempdir(), "moss-runtime")
+        cwd = os.path.join(tempfile.gettempdir(), "moss-provider-cwd")
     # Walk up checking for CLAUDE.md
     leaked = False
     check_dir = cwd

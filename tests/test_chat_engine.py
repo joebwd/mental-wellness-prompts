@@ -47,12 +47,16 @@ class SlowProvider:
     def __init__(self):
         self.cleaned_up = threading.Event()
         self.new_session_calls = 0
+        self.started = threading.Event()
+        self.proceed = threading.Event()
 
     def new_session(self):
         self.new_session_calls += 1
 
     def stream_response(self, user_text, system_prompt, turn_count):
         try:
+            self.started.set()
+            self.proceed.wait(2)
             yield (
                 "hello there, staying with the safe words for now. "
                 "This is still a calm and grounded reply that keeps streaming"
@@ -226,15 +230,15 @@ class ChatEngineTests(unittest.TestCase):
             thread = threading.Thread(target=worker)
             thread.start()
 
-            self.assertTrue(first_chunk_seen.wait(1))
+            self.assertTrue(provider.started.wait(1))
             engine.cancel_pending_response()
             db.close()
+            provider.proceed.set()
             thread.join(1)
 
             self.assertFalse(thread.is_alive())
             self.assertEqual(errors, [])
-            self.assertTrue(chunks)
-            self.assertTrue("".join(chunks).startswith("hello"))
+            self.assertEqual(chunks, [])
             self.assertTrue(provider.cleaned_up.wait(1))
 
             reopened = WellnessDB(path)
@@ -253,7 +257,6 @@ class ChatEngineTests(unittest.TestCase):
             engine.start_session("session-1")
 
             stream = engine.send_message("Rough day")
-            self.assertTrue(next(stream).startswith("partial"))
             with self.assertRaisesRegex(RuntimeError, "provider failed"):
                 next(stream)
 
@@ -445,7 +448,7 @@ class ChatEngineTests(unittest.TestCase):
             finally:
                 db.close()
 
-    def test_clean_stream_still_releases_completed_sentences_midstream(self):
+    def test_clean_stream_releases_only_after_complete_validation(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "clean-stream-sentences.db")
             db = WellnessDB(path)
@@ -459,10 +462,10 @@ class ChatEngineTests(unittest.TestCase):
             try:
                 stream = engine.send_message("Talk to me")
                 first = next(stream)
-                second = next(stream)
-                self.assertEqual(first, "This reply stays grounded and practical for you right now. ")
+                with self.assertRaises(StopIteration):
+                    next(stream)
                 self.assertEqual(
-                    first + second,
+                    first,
                     "This reply stays grounded and practical for you right now. "
                     "We can keep it simple and work one step at a time. Still here with you.",
                 )

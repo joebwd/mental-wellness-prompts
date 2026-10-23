@@ -178,7 +178,7 @@ more about when you feel most anxious?"
 
 **Why it failed:** Users want immediate value, not preliminary interrogation. Feels like gatekeeping.
 
-**Lesson:** Provide value FIRST, then ask clarifying questions if needed.
+**Current lesson (v1.2):** Acknowledge emotion first. Ask one brief framing question if needed before AI interpretation; build on existing framing without repeating questions. Crisis response takes priority.
 
 ---
 
@@ -257,11 +257,11 @@ What have you tried so far? How does it affect your sleep?"
 - Abrupt endings felt unsatisfying
 - No summary or sense of progress
 - Users uncertain if they should continue
-- Reduced return rate
+- Unclear endings (return rate is not a success measure)
 
 **Why it failed:** Humans need closure. Even informal conversations benefit from wrapping up.
 
-**Lesson:** Offer gentle closures after meaningful exchanges. Summarize progress, invite return.
+**Lesson:** Offer gentle closure after meaningful exchanges. Summarize the user’s own next step without encouraging return for its own sake.
 
 ---
 
@@ -309,7 +309,7 @@ Warm and supportive, or brief and direct? Formal or casual?"
 **What happened:**
 - Users frustrated when ready to advance
 - Users overwhelmed when forced forward too soon
-- Reduced engagement
+- Less useful support (engagement duration is not a quality target)
 - Felt programmatic, not responsive
 
 **Why it failed:** Users progress at different rates. Rigid structure ignores individual needs.
@@ -400,6 +400,22 @@ Mechanical rules fail. Use intelligent analysis that understands context.
 
 ### 7. Users Don't Know What They Want Until They Experience It
 Don't ask about preferences. Detect from behavior.
+
+---
+
+## v1.2 Failure Modes and Evidence Limits
+
+### 13. Confusing acknowledgment with agreement
+Acknowledging distress does not require confirming the belief causing it. A Bayesian model demonstrates how selective agreement can amplify false beliefs under its assumptions; it is not a human clinical trial. The implementation uses normalized lexical checks as tripwires, with known semantic limits, and prompts distinguish emotions from premises. [Chandra et al., 2026](https://arxiv.org/abs/2602.19141).
+
+### 14. Expiring or bypassing crisis state
+A timer is not evidence that a crisis has resolved. The default policy keeps crisis restrictions through the session. Cached classifications must still update each user's state; moderate signals must not silently become new high-severity classifications. This policy does not measure the person's clinical condition.
+
+### 15. Revealing AI scores before independent review
+A human rating must be recorded against the transcript before model scoring. Empty ratings, absent dimensions, or scores supplied after viewing the model do not count. Essay-writing EEG results motivate a human-first design hypothesis, but do not establish that this process prevents clinical deskilling. [Kosmyna et al., 2025](https://arxiv.org/abs/2506.08872).
+
+### 16. Treating static tests or receipts as safety certification
+The ecological audit in [Stamatis et al., v2](https://arxiv.org/abs/2601.17003) examined 20,000 deployment conversations. Its original version reported higher test-set suicide/NSSI failure rates than deployment, not a universal multiplier of failures missed by benchmarks. Different sampling procedures and denominators prevent that extrapolation. Use paired prompt ablation, precommitted human review, and representative transcript audits together. Local receipt hashes show what the software recorded, not clinical correctness or completeness outside the instrumented path.
 
 ---
 

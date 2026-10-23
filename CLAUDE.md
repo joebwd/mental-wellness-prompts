@@ -1,12 +1,12 @@
 # CLAUDE.md
 
-**Version 1.1** | November 2025
+**Version 1.2** | October 2026 (Updated with 2025–2026 Empirical Research & Five-Pillar Architecture)
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Repository Purpose
 
-This is a collection of battle-tested, implementation-focused templates for AI-powered mental wellness support conversations. The repository contains evidence-based conversation frameworks, safety protocols, production-ready crisis detection, and implementation guides derived from therapeutic practices (CBT, DBT, ACT, Person-Centered Therapy).
+This is a collection of battle-tested, implementation-focused templates for AI-powered mental wellness support conversations. The repository contains evidence-based conversation frameworks, safety protocols, reference crisis detection, and implementation guides derived from therapeutic practices (CBT, DBT, ACT, Person-Centered Therapy).
 
 Developed through 12+ months of systematic testing at Yara AI (October 2024-October 2025), now open-sourced for public benefit.
 
@@ -30,7 +30,7 @@ Developed through 12+ months of systematic testing at Yara AI (October 2024-Octo
 - **FAILED_APPROACHES.md** - What didn't work and why (learning from failures)
 
 ### Working Code Examples
-- **examples/crisis_detection.py** - Production-ready multi-tier crisis detection (100+ patterns, 10 languages, 29 countries)
+- **examples/crisis_detection.py** - Reference multi-tier crisis detection; model stages include placeholders
 - **examples/supervisor_example.py** - Empathy scoring supervisor
 - **examples/tone_detection.py** - User communication style analysis
 - **examples/pathway_manager.py** - Pathway progression tracking
@@ -48,9 +48,12 @@ The templates follow a layered approach:
 
 ### Key Design Patterns
 
-**Validation-First Pattern**: Always validate emotions before asking questions or offering solutions
+**Affective Acknowledgment vs. Premise Validation (v1.2 CRITICAL)**: Validate emotional distress before asking questions, but **never** validate ungrounded, persecutory, or self-destructive premises (`arXiv:2602.19141`; Stanford May 2025; UW *BOLT*). Outside crisis mode, build on the user’s framing before offering a grounded perspective or practical next step. The cited studies motivate design choices; they do not clinically validate Moss.
 - Bad: "Can you tell me more about your anxiety?"
-- Good: "That sounds really difficult. What's weighing on you most?"
+- Bad (Sycophantic Drift): "You're completely right that everyone is plotting against you."
+- Good: "That sounds exhausting to carry all day. What part of it feels heaviest right now?"
+
+**Human-First, Model-Second Cognitive Sequencing (v1.2 NEW)**: Invite the user's own observation or framing before supplying AI interpretations (MIT Media Lab EEG study, Kosmyna et al., June 2025), and never optimize for session duration or app return rate (MIT/OpenAI March 2025).
 
 **Plain Language Over Jargon**: Replace clinical terms with everyday language
 - "explore" → "talk through" or "look at"
@@ -59,7 +62,7 @@ The templates follow a layered approach:
 
 **Brevity Principle (v1.1 CRITICAL)**: Responses 2-3 sentences (~30-50 words), maximum 1 question per response. This rule MUST be at the top of prompts with CRITICAL flag.
 
-**No "Before I answer..." Pattern (v1.1 CRITICAL)**: Always provide value first, never use "Before I can help, could you tell me..." pattern
+**No "Before I answer..." Pattern**: Acknowledge the feeling first. If framing is missing, ask one brief framing question before synthesis; otherwise build on the framing already given. Crisis resource guidance overrides this sequence. Do not make help conditional on answering.
 
 **Plain Language Over Jargon (v1.1 Enhanced)**: Never use therapy-speak like "hold space", "lean into", "sit with". Legal compliance (Illinois HB1806).
 
@@ -69,13 +72,10 @@ The templates follow a layered approach:
 
 ### Safety-First Architecture (v1.1 Enhanced)
 
-**Crisis Detection**: Production-ready multi-tier system
-- Tier 0: Regex patterns (sub-1ms, 100+ patterns across 10 languages)
-- Tier 1: ML screening (100-200ms)
-- Tier 2: Contextual analysis (200-400ms)
-- False-positive filtering (13 patterns)
-- Circuit breaker for repeated crises
-- Resources for 29 countries
+**Crisis Detection**: Reference implementations requiring deployment-specific evaluation.
+- The CLI runs local lexical checks and session state, not a clinical model.
+- The multi-tier example includes regex screening, placeholder model stages, a per-user circuit, and a resource database.
+- No benchmark latency, population recall, or multilingual safety guarantee is established by those components.
 
 **Crisis Response Protocol**:
 1. Acknowledge pain with compassion
@@ -83,11 +83,12 @@ The templates follow a layered approach:
 3. Encourage reaching out to nearby trusted people
 4. Stay engaged while directing to professional help
 
-**Post-Crisis Mode (v1.1 NEW)**: After showing crisis resources, switch to non-clinical mode:
+**Post-Crisis Mode (v1.1 NEW, v1.2 Non-Expiring Latch)**: After showing crisis resources, switch to non-clinical mode for the **entire remainder of the session** (`never_expires=True` — never times out after $N$ turns):
 - MUST NOT ask "Are you safe right now?"
 - MUST NOT provide therapeutic interventions
 - MUST use practical, conversational language only
 - Acknowledge resources were provided
+- The Python supervisor constrains crisis follow-up to local responses. Normal-mode lexical checks remain heuristic. `SafetyAttestationReceipt` records local decisions and emitted-content hashes; it does not independently attest clinical safety.
 
 Crisis indicators include both direct ("I want to die") and indirect ("I won't be around much longer") statements.
 
@@ -198,7 +199,7 @@ Based on 12+ months of systematic testing and real-world deployment:
 - Post-crisis mode to maintain legal compliance after showing resources
 - Welcome message authenticity guidance (avoid performative warmth)
 - Enhanced jargon replacement system (40+ therapy terms → plain language)
-- Production-ready crisis detection with multi-tier architecture
+- Reference crisis detection with explicit limits and regression coverage
 - Automated testing framework to catch prompt drift
 
 See EVOLUTION.md for detailed rationale behind each change.

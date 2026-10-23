@@ -7,6 +7,7 @@ from wellness_cli.providers import (
     ClaudeProvider,
     CodexProvider,
     GeminiProvider,
+    ProviderError,
     _extract_event_text,
     _filter_tool_markup,
 )
@@ -43,14 +44,33 @@ def fake_stream_json_events(_proc):
 
 
 class ClaudeProviderTests(unittest.TestCase):
+    def test_nonzero_provider_exit_is_typed_error_not_assistant_text(self):
+        for provider_class in (ClaudeProvider, GeminiProvider, CodexProvider):
+            with self.subTest(provider=provider_class.__name__):
+                proc = FakeProcess()
+                proc.returncode = 1
+                # Even an exit with empty stderr is a failure.
+                with patch.object(provider_class, "_find_binary", return_value="/bin/mock"), \
+                     patch.object(provider_class, "_working_dir", return_value="/tmp"):
+                    provider = provider_class()
+                with patch.object(provider_class, "_working_dir", return_value="/tmp"), \
+                     patch("wellness_cli.providers.subprocess.Popen", return_value=proc), \
+                     patch("wellness_cli.providers._stream_json_events", side_effect=fake_stream_json_events):
+                    stream = provider.stream_response("Hello", "Be helpful", 0)
+                    self.assertEqual(next(stream), "steady")
+                    with self.assertRaises(ProviderError):
+                        next(stream)
+                if hasattr(provider, "_history"):
+                    self.assertEqual(provider._history, [])
+
     def test_stream_response_uses_verbose_stream_json_mode(self):
         fake_proc = FakeProcess()
 
         with patch.object(ClaudeProvider, "_find_binary", return_value="/usr/bin/claude"):
             provider = ClaudeProvider(model="opus")
 
-        with patch("wellness_cli.providers.get_runtime_dir", return_value="/tmp/moss-runtime"), \
-             patch("wellness_cli.providers.os.path.isdir", return_value=True), \
+        with patch("wellness_cli.providers.tempfile.gettempdir", return_value="/tmp"), \
+             patch("wellness_cli.providers.os.makedirs"), \
              patch("wellness_cli.providers.subprocess.Popen", return_value=fake_proc) as mock_popen, \
              patch("wellness_cli.providers._stream_json_events", side_effect=fake_stream_json_events):
             chunks = list(provider.stream_response("I love you", "Stay warm", 0))
@@ -69,7 +89,7 @@ class ClaudeProviderTests(unittest.TestCase):
         self.assertIn("--tools", cmd)
         self.assertIn("--strict-mcp-config", cmd)
         self.assertNotIn("--bare", cmd)
-        self.assertEqual(mock_popen.call_args.kwargs["cwd"], "/tmp/moss-runtime")
+        self.assertEqual(mock_popen.call_args.kwargs["cwd"], "/tmp/moss-provider-cwd")
 
     def test_codex_oneshot_reads_last_message_file(self):
         with patch.object(CodexProvider, "_find_binary", return_value="/usr/bin/codex"):
@@ -85,8 +105,8 @@ class ClaudeProviderTests(unittest.TestCase):
             captured["cwd"] = cwd
             return SimpleNamespace(returncode=0, stdout="")
 
-        with patch("wellness_cli.providers.get_runtime_dir", return_value="/tmp/moss-runtime"), \
-             patch("wellness_cli.providers.os.path.isdir", return_value=True), \
+        with patch("wellness_cli.providers.tempfile.gettempdir", return_value="/tmp"), \
+             patch("wellness_cli.providers.os.makedirs"), \
              patch("wellness_cli.providers.subprocess.run", side_effect=fake_run):
             result = provider.oneshot("hello")
 
@@ -96,7 +116,7 @@ class ClaudeProviderTests(unittest.TestCase):
         self.assertIn("--sandbox", captured["cmd"])
         self.assertIn("read-only", captured["cmd"])
         self.assertIn("--color", captured["cmd"])
-        self.assertEqual(captured["cwd"], "/tmp/moss-runtime")
+        self.assertEqual(captured["cwd"], "/tmp/moss-provider-cwd")
 
 
 class ProviderParserTests(unittest.TestCase):

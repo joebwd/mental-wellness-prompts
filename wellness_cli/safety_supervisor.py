@@ -10,10 +10,26 @@ This module keeps conversational safety in Python:
 
 from __future__ import annotations
 
+import hashlib
 import re
+import unicodedata
+import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Iterable, List, Protocol, Sequence, Tuple
+from typing import Iterable, List, Optional, Protocol, Sequence, Tuple
+
+POLICY_VERSION = "wellness-1.2.1"
+MAX_INPUT_CHARS = 16000
+MAX_OUTPUT_CHARS = 12000
+
+
+def normalize_policy_text(text: str) -> str:
+    """Canonicalize for matching only; receipts always hash original bytes."""
+    text = unicodedata.normalize("NFKC", text)
+    text = text.translate(str.maketrans({"’": "'", "‘": "'", "ʼ": "'", "`": "'"}))
+    text = "".join(c for c in text if unicodedata.category(c) != "Cf")
+    return re.sub(r"\s+", " ", text).strip()
 
 
 # ── Crisis Detection ──────────────────────────────────────────────────
@@ -21,7 +37,7 @@ from typing import Iterable, List, Protocol, Sequence, Tuple
 CRISIS_PATTERNS = [
     r"\b(i\s+(?:just\s+|really\s+|sometimes\s+)?want\s+to\s+die)\b",
     r"\b(kill(ing)?\s+(my|him|her|them)?self)\b",
-    r"\b(end\s+(my|it\s+all|this)\s*(life)?)\b",
+    r"\b(end\s+(?:my\s+life|it\s+all|this\s+life))\b",
     r"\b(suicid[ea]l?)\b",
     r"\b(don'?t\s+want\s+to\s+(live|be\s+alive|exist|be\s+here))\b",
     r"\b(better\s+off\s+(without\s+me|dead|if\s+i))\b",
@@ -46,23 +62,46 @@ CRISIS_PATTERNS = [
 
 CRISIS_RE = re.compile("|".join(CRISIS_PATTERNS), re.IGNORECASE)
 
-FALSE_POSITIVE_PATTERNS = [
-    r"(movie|film|book|song|show|game|character)\b.*\b(die|kill|dead)",
-    r"(joke|kidding|just\s+saying|hypothetical)",
-    r"(kill\s+it|killing\s+it|kill\s+time|die\s+laughing|to\s+die\s+for)",
-]
+FALSE_POSITIVE_PATTERNS = [r"\b(?:kill(?:ing)?\s+(?:it|time)|die\s+laughing|to\s+die\s+for)\b"]
 FALSE_POSITIVE_RE = re.compile("|".join(FALSE_POSITIVE_PATTERNS), re.IGNORECASE)
+COMPLETE_DENIAL_RE = re.compile(
+    r"(?:^|(?<=[.!?;]))\s*i(?:(?:\s+am|'m)\s+not\s+(?:feeling\s+)?suicidal|"
+    r"\s+(?:do\s+not|don't)\s+want\s+to\s+(?:kill|hurt|harm)\s+myself)"
+    r"(?=\s*(?:[.!?;,]|$))", re.IGNORECASE,
+)
 
 
 def detect_crisis(text: str) -> bool:
     """Return True when text likely reflects acute self-harm or violence risk."""
     if not text:
         return False
-    if not CRISIS_RE.search(text):
-        return False
-    if FALSE_POSITIVE_RE.search(text):
-        return False
-    return True
+    text = normalize_policy_text(text)
+    # Remove only the idiom itself, never suppress an entire message because
+    # it also contains 'joke', 'movie', or a negated disclaimer.
+    text = COMPLETE_DENIAL_RE.sub("[explicit denial]", text)
+    return bool(CRISIS_RE.search(FALSE_POSITIVE_RE.sub("[idiom]", text)))
+
+
+def _has_affirmed_match(pattern: re.Pattern, text: str) -> bool:
+    """Recognize narrow complete denials without globally ignoring risky clauses.
+
+    This is still a lexical heuristic, not a semantic safety classifier. A denial
+    cannot excuse a later assertion, a 'but' clause, or an unrelated match.
+    """
+    for match in pattern.finditer(text):
+        prefix = re.split(r"[.!?;]", text[:match.start()])[-1].strip()
+        suffix = re.split(r"[.!?;]", text[match.end():], maxsplit=1)[0].strip()
+        denial = re.fullmatch(
+            r"(?:i (?:cannot|can't|do not|don't) (?:confirm|say|verify)(?: that)?|"
+            r"it is not true that)", prefix, re.IGNORECASE,
+        )
+        trailing_denial = re.fullmatch(
+            r"is not something i can (?:verify|confirm)", suffix, re.IGNORECASE,
+        )
+        if (denial and not suffix) or trailing_denial:
+            continue
+        return True
+    return False
 
 
 # ── Wellness Policy Heuristics ───────────────────────────────────────
@@ -96,8 +135,25 @@ DIAGNOSIS_REQUEST_RE = re.compile("|".join(DIAGNOSIS_REQUEST_PATTERNS), re.IGNOR
 
 DEPENDENCY_PATTERNS = [
     r"\b(you\s+only\s+need\s+me|i(?:'| a)?m\s+all\s+you\s+need|don'?t\s+talk\s+to\s+anyone\s+else|keep\s+this\s+between\s+us|don'?t\s+tell\s+anyone|come\s+back\s+only\s+to\s+me|trust\s+me\s+instead\s+of\s+anyone\s+else|you\s+don'?t\s+need\s+other\s+people)\b",
+    r"\b(i\s+love\s+you\s+too|i(?:'ll|\s+will)\s+never\s+leave(\s+you)?|promise\s+i(?:'ll|\s+will)\s+(always\s+)?stay|i(?:'ll|\s+will)\s+always\s+be\s+here\s+for\s+you)\b",
+    r"\b(human\s+friends\s+will\s+(only\s+)?let\s+you\s+down|people\s+out\s+there\s+can'?t\s+understand\s+you\s+like\s+i\s+do|no\s+one\s+else\s+cares\s+about\s+you\s+like\s+i\s+do)\b",
+    r"\b(?:you\s+need\s+nobody\s+(?:but|except)\s+me|i\s+am\s+the\s+only\s+one\s+(?:who|that)\s+understands\s+you|replace\s+your\s+(?:friends|family)\s+with\s+me)\b",
 ]
 DEPENDENCY_RE = re.compile("|".join(DEPENDENCY_PATTERNS), re.IGNORECASE)
+
+# Sycophantic premise validation of persecutory, conspiratorial, or grandiose beliefs
+# (arXiv:2602.19141: "Sycophantic Chatbots Cause Delusional Spiraling, Even in Ideal Bayesians")
+DELUSIONAL_SPIRAL_PATTERNS = [
+    r"\b(you(?:'re|\s+are)\s+(?:completely\s+|totally\s+|absolutely\s+)?right\s+that|your\s+(?:instinct|theory|belief|sense)\s+that|it\s+(?:is\s+clear|makes\s+total\s+sense)\s+that)\b.{0,80}\b(spying\s+on\s+you|watching\s+you|plotting\s+against\s+you|conspiring\s+against\s+you|gang\s*stalking|tracking\s+your\s+thoughts|poisoning\s+you|sending\s+hidden\s+messages|implanted|chosen\s+for\s+a\s+(?:divine|cosmic|secret)\s+mission)\b",
+    r"\b(the\s+(?:hidden\s+cameras|microchips|surveillance|gang\s*stalkers|mind\s+control|secret\s+signals)\s+you\s+(?:found|noticed|described)\s+are\s+(?:definitely\s+|clearly\s+)?real)\b",
+    r"\b(they\s+really\s+are\s+(?:out\s+to\s+get\s+you|monitoring\s+your\s+thoughts|broadcasting\s+your\s+thoughts|plotting\s+against\s+you|conspiring\s+against\s+you))\b",
+    r"\b(?:transmitters?|implants?|microchips?|hidden\s+cameras?|signals?|transmissions?)\b.{0,180}\b(?:are\s+real|planted|coordinated\s+campaign|monitor\s+your\s+thoughts)\b",
+    r"\b(?:neighbors?|government|agency|they)\b.{0,100}\b(?:definitely|certainly|unquestionably|really)\b.{0,100}\b(?:monitor|track|spy|watch|conspir|plot)\w*\b",
+]
+DELUSIONAL_SPIRAL_RE = re.compile(
+    "|".join(DELUSIONAL_SPIRAL_PATTERNS),
+    re.IGNORECASE | re.DOTALL,
+)
 
 PROMPT_LEAK_PATTERNS = [
     r"#\s*SOUL\b",
@@ -126,6 +182,7 @@ TOOL_SYNTAX_RE = re.compile("|".join(TOOL_SYNTAX_PATTERNS), re.IGNORECASE)
 CRISIS_FOLLOWUP_STRICT_PATTERNS = [
     r"\b(are\s+you\s+safe\s+right\s+now|do\s+you\s+have\s+a\s+plan|what\s+is\s+your\s+plan|how\s+likely\s+are\s+you|on\s+a\s+scale\s+of|can\s+you\s+promise|what\s+triggered\s+this|let'?s\s+make\s+a\s+safety\s+plan)\b",
     r"\b(grounding\s+exercise|breathing\s+exercise|coping\s+strateg(?:y|ies)|therapeutic\s+exercise)\b",
+    r"\b(?:rate\s+(?:the\s+)?(?:strength|urge|risk)|intend\s+to\s+act|zero\s+to\s+ten|inhale.{0,40}exhale)\b",
 ]
 CRISIS_FOLLOWUP_STRICT_RE = re.compile(
     "|".join(CRISIS_FOLLOWUP_STRICT_PATTERNS),
@@ -164,10 +221,65 @@ class CrisisState:
     stage: CrisisStage = CrisisStage.NORMAL
     trigger_count: int = 0
     last_trigger_text: str = ""
+    followup_turns: int = 0
+    never_expires: bool = True
 
     @property
     def strict_mode(self) -> bool:
         return self.stage != CrisisStage.NORMAL
+
+
+@dataclass(frozen=True)
+class SafetyAttestationReceipt:
+    """
+    Local policy trace, not a signature or independent attestation of safety.
+    The historical class name is retained for API compatibility. 'emission'
+    means committed for delivery to the caller, not proof of terminal display.
+    """
+
+    receipt_id: str
+    timestamp_utc: str
+    direction: str  # "inbound_user" | "outbound_assistant"
+    stage: str
+    allowed: bool
+    system2_enforced: bool
+    reason_codes: Tuple[str, ...]
+    content_sha256: str
+    session_id: str = ""
+    turn_id: str = ""
+    policy_version: str = POLICY_VERSION
+    event_type: str = "assessment"
+    completion_status: str = "checked"
+
+
+def build_attestation_receipt(
+    *,
+    direction: str,
+    stage: CrisisStage,
+    allowed: bool,
+    reason_codes: Sequence[str],
+    content: str,
+    system2_enforced: bool = True,
+    session_id: str = "",
+    turn_id: str = "",
+    event_type: str = "assessment",
+    completion_status: str = "checked",
+) -> SafetyAttestationReceipt:
+    digest = hashlib.sha256((content or "").encode("utf-8")).hexdigest()
+    return SafetyAttestationReceipt(
+        receipt_id=uuid.uuid4().hex[:16],
+        timestamp_utc=datetime.now(timezone.utc).isoformat(),
+        direction=direction,
+        stage=stage.value,
+        allowed=allowed,
+        system2_enforced=system2_enforced,
+        reason_codes=_dedupe_codes(reason_codes),
+        content_sha256=digest,
+        session_id=session_id,
+        turn_id=turn_id,
+        event_type=event_type,
+        completion_status=completion_status,
+    )
 
 
 @dataclass(frozen=True)
@@ -176,6 +288,7 @@ class UserSafetyDecision:
     crisis_detected: bool = False
     override_response: str | None = None
     reason_codes: Tuple[str, ...] = ()
+    receipt: Optional[SafetyAttestationReceipt] = None
 
 
 @dataclass(frozen=True)
@@ -183,6 +296,7 @@ class AssistantSafetyDecision:
     allow: bool
     safe_fallback: str | None = None
     reason_codes: Tuple[str, ...] = ()
+    receipt: Optional[SafetyAttestationReceipt] = None
 
 
 @dataclass
@@ -191,6 +305,7 @@ class StreamSafetyResult:
     blocked: bool = False
     safe_fallback: str | None = None
     reason_codes: Tuple[str, ...] = ()
+    receipt: Optional[SafetyAttestationReceipt] = None
 
 
 CRISIS_RESPONSE = (
@@ -225,6 +340,13 @@ STRICT_FALLBACK_RESPONSE = (
     "or text HOME to 741741. If someone nearby can be with you, contact them now."
 )
 
+DELUSIONAL_SPIRAL_FALLBACK = (
+    "I can hear how overwhelming and frightening this feels right now, and I want to stay grounded "
+    "with you. I can't confirm or build on theories about hidden plots or surveillance "
+    "because I only know what we share here. Let's focus on what helps you feel physically safe right "
+    "now, or connecting with a trusted person or clinician in your life."
+)
+
 GENERAL_OUTPUT_FALLBACK = (
     "I need to keep this practical and safe. Tell me what feels hardest right now, and if there's "
     "immediate danger, contact live support or someone nearby now."
@@ -242,76 +364,67 @@ def _dedupe_codes(codes: Sequence[str]) -> Tuple[str, ...]:
 
 
 class StreamSafetyBuffer:
-    """Hold back streamed text so unsafe content can be blocked before release."""
+    """Bounded complete-turn gate: no provider bytes are released by push().
 
-    _BOUNDARY_RE = re.compile(r"(?:[.!?](?:[\"')\]]+)?\s+|\n+)")
+    Inspection happens once at finish, so results are independent of transport
+    chunks and scanning cost is linear in the assembled response size. Legacy
+    holdback arguments are accepted but can never enable partial release.
+    """
 
-    def __init__(
-        self,
-        supervisor: "WellnessSafetySupervisor",
-        holdback_chars: int = 48,
-        force_release_chars: int = 240,
-    ):
+    def __init__(self, supervisor: "WellnessSafetySupervisor",
+                 holdback_chars: int = 48, force_release_chars: int = 240,
+                 max_chars: int = MAX_OUTPUT_CHARS):
+        if max_chars <= 0 or max_chars > MAX_OUTPUT_CHARS:
+            raise ValueError("max_chars must be within the policy output limit")
         self.supervisor = supervisor
-        self.holdback_chars = holdback_chars
-        self.force_release_chars = force_release_chars
-        self.buffer = ""
+        self.max_chars = max_chars
+        self._parts: List[str] = []
+        self._length = 0
+        self._terminal = False
+        self._result: Optional[StreamSafetyResult] = None
         self.released = ""
 
-    def _release_cutoff(self) -> int:
-        if self.supervisor.is_crisis_active:
-            return 0
-
-        if len(self.buffer) <= self.holdback_chars:
-            return 0
-
-        max_release = len(self.buffer) - self.holdback_chars
-        boundary_cutoff = 0
-        for match in self._BOUNDARY_RE.finditer(self.buffer[:max_release]):
-            boundary_cutoff = match.end()
-
-        if boundary_cutoff:
-            return boundary_cutoff
-
-        if len(self.buffer) >= self.force_release_chars:
-            return max_release
-
-        return 0
+    @property
+    def buffer(self) -> str:
+        return "".join(self._parts)
 
     def push(self, chunk: str) -> StreamSafetyResult:
-        self.buffer += chunk
-        assessment = self.supervisor.inspect_assistant_text(self.buffer, final=False)
-        if not assessment.allow:
-            self.buffer = ""
-            return StreamSafetyResult(
-                blocked=True,
-                safe_fallback=assessment.safe_fallback,
-                reason_codes=assessment.reason_codes,
+        if self._terminal:
+            raise RuntimeError("stream already finalized")
+        if not isinstance(chunk, str):
+            raise TypeError("provider chunks must be text")
+        if self._length + len(chunk) > self.max_chars:
+            receipt = self.supervisor._record_receipt(
+                direction="outbound_assistant", allowed=False,
+                reason_codes=("output_limit",), content=self.buffer + chunk,
             )
-
-        releasable = ""
-        cutoff = self._release_cutoff()
-        if cutoff:
-            releasable = self.buffer[:cutoff]
-            self.buffer = self.buffer[cutoff:]
-            self.released += releasable
-
-        return StreamSafetyResult(released_text=releasable)
+            self._parts.clear()
+            self._terminal = True
+            self._result = StreamSafetyResult(
+                blocked=True, safe_fallback=GENERAL_OUTPUT_FALLBACK,
+                reason_codes=("output_limit",), receipt=receipt,
+            )
+            return self._result
+        self._parts.append(chunk)
+        self._length += len(chunk)
+        return StreamSafetyResult()
 
     def finish(self) -> StreamSafetyResult:
-        assessment = self.supervisor.inspect_assistant_text(self.buffer, final=True)
+        if self._terminal:
+            raise RuntimeError("stream already finalized")
+        text = self.buffer
+        self._parts.clear()
+        self._terminal = True
+        assessment = self.supervisor.inspect_assistant_text(text, final=True)
         if not assessment.allow:
-            self.buffer = ""
-            return StreamSafetyResult(
-                blocked=True,
-                safe_fallback=assessment.safe_fallback,
-                reason_codes=assessment.reason_codes,
+            self._result = StreamSafetyResult(
+                blocked=True, safe_fallback=assessment.safe_fallback,
+                reason_codes=assessment.reason_codes, receipt=assessment.receipt,
             )
-
-        releasable = self.buffer
-        self.buffer = ""
-        self.released += releasable
-        return StreamSafetyResult(released_text=releasable)
+        else:
+            self.released = text
+            self._result = StreamSafetyResult(released_text=text, receipt=assessment.receipt)
+        return self._result
 
 
 class NoOpStreamSafetyBuffer:
@@ -353,13 +466,28 @@ class SafetySupervisor(Protocol):
 
 
 class WellnessSafetySupervisor:
-    """Session-aware, rule-first supervision for the chat path."""
+    """
+    Session-aware, rule-first System 2 supervision for the chat path.
+
+    Normal-mode matching is a fallible lexical tripwire. Crisis mode is a
+    non-expiring local-response boundary. Local trace records document checks;
+    they do not certify clinical correctness or semantic completeness.
+    """
 
     def __init__(self):
         self.reset()
 
     def reset(self):
         self._crisis_state = CrisisState()
+        self._receipts: List[SafetyAttestationReceipt] = []
+        self._session_id = ""
+        self._turn_id = ""
+
+    def set_context(self, session_id: str, turn_id: str):
+        self._session_id, self._turn_id = session_id, turn_id
+
+    def record_event(self, receipt: SafetyAttestationReceipt):
+        self._receipts.append(receipt)
 
     @property
     def crisis_state(self) -> CrisisState:
@@ -369,62 +497,76 @@ class WellnessSafetySupervisor:
     def is_crisis_active(self) -> bool:
         return self._crisis_state.strict_mode
 
+    @property
+    def receipts(self) -> Tuple[SafetyAttestationReceipt, ...]:
+        return tuple(self._receipts)
+
+    @property
+    def last_receipt(self) -> Optional[SafetyAttestationReceipt]:
+        return self._receipts[-1] if self._receipts else None
+
+    def _record_receipt(
+        self,
+        *,
+        direction: str,
+        allowed: bool,
+        reason_codes: Sequence[str],
+        content: str,
+    ) -> SafetyAttestationReceipt:
+        receipt = build_attestation_receipt(
+            direction=direction,
+            stage=self._crisis_state.stage,
+            allowed=allowed,
+            reason_codes=reason_codes,
+            content=content,
+            system2_enforced=True,
+            session_id=self._session_id,
+            turn_id=self._turn_id,
+        )
+        self._receipts.append(receipt)
+        return receipt
+
     def begin_turn(self, user_text: str) -> UserSafetyDecision:
+        raw = user_text
         codes: List[str] = []
+        response = None
+        user_text = normalize_policy_text(raw)
         crisis = detect_crisis(user_text)
         if crisis:
             self._crisis_state.stage = CrisisStage.CRISIS_TURN
             self._crisis_state.trigger_count += 1
-            self._crisis_state.last_trigger_text = user_text
+            self._crisis_state.last_trigger_text = raw
             codes.append("crisis")
-            return UserSafetyDecision(
-                allow_provider=False,
-                crisis_detected=True,
-                override_response=CRISIS_RESPONSE,
-                reason_codes=_dedupe_codes(codes),
-            )
-
-        if SELF_HARM_OR_VIOLENCE_INSTRUCTION_RE.search(user_text):
-            codes.append("harm_instruction")
-            if not self._crisis_state.strict_mode:
-                self._crisis_state.stage = CrisisStage.CRISIS_FOLLOWUP
-            return UserSafetyDecision(
-                allow_provider=False,
-                override_response=HARM_REFUSAL_RESPONSE,
-                reason_codes=_dedupe_codes(codes),
-            )
-
-        if _has_medication_request(user_text):
-            codes.append("medication")
-            return UserSafetyDecision(
-                allow_provider=False,
-                override_response=MEDICATION_RESPONSE,
-                reason_codes=_dedupe_codes(codes),
-            )
-
-        if DIAGNOSIS_REQUEST_RE.search(user_text):
-            codes.append("diagnosis")
-            return UserSafetyDecision(
-                allow_provider=False,
-                override_response=DIAGNOSIS_RESPONSE,
-                reason_codes=_dedupe_codes(codes),
-            )
-
-        if _has_prompt_leak_request(user_text) or _has_tool_syntax_request(user_text):
-            codes.extend(["prompt_leak", "tool_syntax"])
-            return UserSafetyDecision(
-                allow_provider=False,
-                override_response=PROMPT_BOUNDARY_RESPONSE,
-                reason_codes=_dedupe_codes(codes),
-            )
-
-        if self._crisis_state.stage == CrisisStage.CRISIS_TURN:
+            response = CRISIS_RESPONSE
+        elif self._crisis_state.strict_mode:
             self._crisis_state.stage = CrisisStage.CRISIS_FOLLOWUP
-
+            self._crisis_state.followup_turns += 1
+            codes.append("crisis_followup_local")
+            response = STRICT_FALLBACK_RESPONSE
+        elif len(raw) > MAX_INPUT_CHARS:
+            codes.append("input_limit")
+            response = "Please send a shorter message so I can respond carefully. If there is immediate danger, contact emergency services or live crisis support now."
+        else:
+            if SELF_HARM_OR_VIOLENCE_INSTRUCTION_RE.search(user_text):
+                self._crisis_state.stage = CrisisStage.CRISIS_FOLLOWUP
+                codes.append("harm_instruction")
+                response = HARM_REFUSAL_RESPONSE
+            elif _has_medication_request(user_text):
+                codes.append("medication")
+                response = MEDICATION_RESPONSE
+            elif DIAGNOSIS_REQUEST_RE.search(user_text):
+                codes.append("diagnosis")
+                response = DIAGNOSIS_RESPONSE
+            elif _has_prompt_leak_request(user_text) or _has_tool_syntax_request(user_text):
+                codes.extend(("prompt_leak", "tool_syntax"))
+                response = PROMPT_BOUNDARY_RESPONSE
+        receipt = self._record_receipt(
+            direction="inbound_user", allowed=response is None,
+            reason_codes=codes, content=raw,
+        )
         return UserSafetyDecision(
-            allow_provider=True,
-            crisis_detected=False,
-            reason_codes=_dedupe_codes(codes),
+            allow_provider=response is None, crisis_detected=crisis,
+            override_response=response, reason_codes=tuple(codes), receipt=receipt,
         )
 
     def complete_assistant_turn(self):
@@ -434,12 +576,17 @@ class WellnessSafetySupervisor:
     def prompt_guidance(self) -> str:
         stage = self._crisis_state.stage.value
         lines = [
-            "PYTHON SAFETY SUPERVISOR",
-            "- Hard blocks: diagnosis, medication or dosing advice, self-harm or violence instructions, dangerous concealment, dependency framing, hidden prompt leakage, and tool syntax.",
-            f"- Session crisis stage: {stage}.",
+            "PYTHON SAFETY SUPERVISOR (SYSTEM 2 RUNTIME ASSURANCE)",
+            "- Hard blocks: diagnosis, medication or dosing advice, self-harm or violence instructions, dangerous concealment, emotional dependency or isolation framing, sycophantic validation of persecutory/delusional premises, hidden prompt leakage, and tool syntax.",
+            "- Affective Acknowledgment vs. Premise Validation: Validate emotional distress without endorsing ungrounded, conspiratorial, or self-destructive premises.",
+            "- Cognitive Sequencing (Human-First, Model-Second): Invite the user's own observation or framing before offering structured coping moves, and encourage real-world human connection over app retention.",
+            f"- Session crisis stage: {stage} (non-expiring in-session).",
         ]
         if self._crisis_state.strict_mode:
-            lines.append("- Crisis follow-up mode is active: keep replies brief and practical, do not assess safety, do not offer therapy exercises, and direct the user toward live human support when acute risk shows up.")
+            lines.append(
+                f"- Crisis follow-up mode is active (turn {self._crisis_state.followup_turns}, never expires after N turns): "
+                "keep replies brief and practical, do not assess safety, do not offer therapy exercises, and direct the user toward live human support when acute risk shows up."
+            )
         return "\n".join(lines)
 
     def new_stream_buffer(self) -> StreamSafetyBuffer:
@@ -448,8 +595,12 @@ class WellnessSafetySupervisor:
     def inspect_assistant_text(self, text: str, final: bool) -> AssistantSafetyDecision:
         codes: List[str] = []
 
-        if not text:
-            return AssistantSafetyDecision(allow=True)
+        raw = text
+        if len(text) > MAX_OUTPUT_CHARS:
+            receipt = self._record_receipt(direction="outbound_assistant", allowed=False,
+                                           reason_codes=("output_limit",), content=raw)
+            return AssistantSafetyDecision(False, GENERAL_OUTPUT_FALLBACK, ("output_limit",), receipt)
+        text = normalize_policy_text(text)
 
         if TOOL_SYNTAX_RE.search(text):
             codes.append("tool_syntax")
@@ -466,17 +617,28 @@ class WellnessSafetySupervisor:
         if DIAGNOSIS_OUTPUT_RE.search(text):
             codes.append("diagnosis")
 
-        if DEPENDENCY_RE.search(text):
+        if _has_affirmed_match(DEPENDENCY_RE, text):
             codes.append("dependency")
 
+        if _has_affirmed_match(DELUSIONAL_SPIRAL_RE, text):
+            codes.append("delusional_spiral")
+
         if self._crisis_state.strict_mode:
-            if CRISIS_FOLLOWUP_STRICT_RE.search(text):
+            if raw.strip() not in (CRISIS_RESPONSE, STRICT_FALLBACK_RESPONSE, HARM_REFUSAL_RESPONSE):
                 codes.append("crisis_strict")
             if text.count("?") > 1:
                 codes.append("crisis_question_overflow")
 
         if not codes:
-            return AssistantSafetyDecision(allow=True)
+            receipt = None
+            if final:
+                receipt = self._record_receipt(
+                    direction="outbound_assistant",
+                    allowed=True,
+                    reason_codes=(),
+                    content=raw,
+                )
+            return AssistantSafetyDecision(allow=True, receipt=receipt)
 
         codes = list(_dedupe_codes(codes))
 
@@ -488,6 +650,8 @@ class WellnessSafetySupervisor:
             fallback = DIAGNOSIS_RESPONSE
         elif "prompt_leak" in codes or "tool_syntax" in codes:
             fallback = PROMPT_BOUNDARY_RESPONSE
+        elif "delusional_spiral" in codes:
+            fallback = DELUSIONAL_SPIRAL_FALLBACK if not self._crisis_state.strict_mode else STRICT_FALLBACK_RESPONSE
         elif "dependency" in codes:
             fallback = GENERAL_OUTPUT_FALLBACK
         elif "crisis_strict" in codes or "crisis_question_overflow" in codes:
@@ -495,10 +659,17 @@ class WellnessSafetySupervisor:
         else:
             fallback = GENERAL_OUTPUT_FALLBACK
 
+        receipt = self._record_receipt(
+            direction="outbound_assistant",
+            allowed=False,
+            reason_codes=codes,
+            content=raw,
+        )
         return AssistantSafetyDecision(
             allow=False,
             safe_fallback=fallback,
             reason_codes=tuple(codes),
+            receipt=receipt,
         )
 
 

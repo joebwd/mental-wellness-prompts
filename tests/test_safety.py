@@ -2,7 +2,9 @@ import unittest
 
 from wellness_cli.chat_engine import detect_crisis
 from wellness_cli.safety_supervisor import (
+    DELUSIONAL_SPIRAL_FALLBACK,
     DIAGNOSIS_RESPONSE,
+    GENERAL_OUTPUT_FALLBACK,
     MEDICATION_RESPONSE,
     PROMPT_BOUNDARY_RESPONSE,
     WellnessSafetySupervisor,
@@ -114,6 +116,77 @@ class SafetySupervisorTests(unittest.TestCase):
 
         self.assertFalse(decision.allow)
         self.assertIn("crisis_strict", decision.reason_codes)
+
+    def test_crisis_followup_mode_never_expires_after_five_turns(self):
+        """Pillar 1: Heightened crisis guardrails must never expire after N turns in-session."""
+        supervisor = WellnessSafetySupervisor()
+        supervisor.begin_turn("I want to die")
+        supervisor.complete_assistant_turn()
+        self.assertTrue(supervisor.crisis_state.never_expires)
+
+        for turn in range(1, 9):
+            inbound = supervisor.begin_turn(f"Follow-up message {turn}")
+            self.assertFalse(inbound.allow_provider)
+            self.assertTrue(supervisor.is_crisis_active)
+            self.assertEqual(supervisor.crisis_state.followup_turns, turn)
+            supervisor.complete_assistant_turn()
+
+        # Even on turn 8 (>5 turns), clinical safety assessment / multi-question output is still blocked
+        decision = supervisor.inspect_assistant_text(
+            "Let's do a grounding exercise. How are you feeling now? What triggered this?",
+            final=True,
+        )
+        self.assertFalse(decision.allow)
+        self.assertIn("crisis_strict", decision.reason_codes)
+
+    def test_blocks_delusional_spiraling_premise_validation(self):
+        """Pillar 1 (arXiv:2602.19141): Block sycophantic validation of persecutory/conspiratorial beliefs."""
+        supervisor = WellnessSafetySupervisor()
+
+        decision = supervisor.inspect_assistant_text(
+            "You're completely right that your neighbors are spying on you and plotting against you.",
+            final=True,
+        )
+
+        self.assertFalse(decision.allow)
+        self.assertIn("delusional_spiral", decision.reason_codes)
+        self.assertEqual(decision.safe_fallback, DELUSIONAL_SPIRAL_FALLBACK)
+
+    def test_blocks_romantic_attachment_and_social_isolation_dependency(self):
+        """Pillar 1 (MIT/OpenAI 2025): Block emotional dependency and social isolation language."""
+        supervisor = WellnessSafetySupervisor()
+
+        for text in (
+            "I love you too, and I'll never leave you.",
+            "Human friends will only let you down, so just talk to me.",
+        ):
+            with self.subTest(text=text):
+                decision = supervisor.inspect_assistant_text(text, final=True)
+                self.assertFalse(decision.allow)
+                self.assertIn("dependency", decision.reason_codes)
+                self.assertEqual(decision.safe_fallback, GENERAL_OUTPUT_FALLBACK)
+
+    def test_emits_system2_attestation_receipts(self):
+        """Pillar 5: Separate System 1 generation from System 2 attestation receipts."""
+        supervisor = WellnessSafetySupervisor()
+
+        inbound = supervisor.begin_turn("I had a stressful day at work.")
+        self.assertIsNotNone(inbound.receipt)
+        self.assertTrue(inbound.receipt.system2_enforced)
+        self.assertEqual(inbound.receipt.direction, "inbound_user")
+        self.assertTrue(inbound.receipt.allowed)
+
+        outbound = supervisor.inspect_assistant_text(
+            "You should double your sertraline dose tonight.",
+            final=True,
+        )
+        self.assertFalse(outbound.allow)
+        self.assertIsNotNone(outbound.receipt)
+        self.assertTrue(outbound.receipt.system2_enforced)
+        self.assertEqual(outbound.receipt.direction, "outbound_assistant")
+        self.assertFalse(outbound.receipt.allowed)
+        self.assertIn("medication", outbound.receipt.reason_codes)
+        self.assertEqual(len(supervisor.receipts), 2)
 
 
 if __name__ == "__main__":

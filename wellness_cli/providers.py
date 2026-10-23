@@ -295,6 +295,10 @@ def _cleanup_process(proc: subprocess.Popen[str]):
             pass
 
 
+class ProviderError(RuntimeError):
+    """Provider failed; never treat transport errors as assistant text."""
+
+
 class Provider(ABC):
     """Base class for CLI inference providers."""
 
@@ -451,12 +455,11 @@ class ClaudeProvider(Provider):
             proc.wait()
             if proc.returncode != 0:
                 stderr = _stderr_message(proc)
-                if stderr:
-                    yield f"\n[Connection issue: {stderr[:200]}]"
-        except FileNotFoundError:
-            yield "[Error: claude CLI not found]"
-        except Exception as e:
-            yield f"[Error: {e}]"
+                raise ProviderError(f"Provider exited with status {proc.returncode}")
+        except FileNotFoundError as exc:
+            raise ProviderError("claude CLI not found") from exc
+        except Exception as exc:
+            raise ProviderError("claude provider failed") from exc
         finally:
             if proc is not None:
                 _cleanup_process(proc)
@@ -597,18 +600,18 @@ class GeminiProvider(Provider):
 
             proc.wait()
 
+            if proc.returncode != 0:
+                stderr = _stderr_message(proc)
+                raise ProviderError(f"Provider exited with status {proc.returncode}")
+
             # Store in history for future turns
             self._history.append({"role": "user", "content": user_text})
             self._history.append({"role": "assistant", "content": full_response.strip()})
 
-            if proc.returncode != 0:
-                stderr = _stderr_message(proc)
-                if stderr and "error" in stderr.lower():
-                    yield f"\n[Connection issue: {stderr[:200]}]"
-        except FileNotFoundError:
-            yield "[Error: gemini CLI not found]"
-        except Exception as e:
-            yield f"[Error: {e}]"
+        except FileNotFoundError as exc:
+            raise ProviderError("gemini CLI not found") from exc
+        except Exception as exc:
+            raise ProviderError("gemini provider failed") from exc
         finally:
             if proc is not None:
                 _cleanup_process(proc)
@@ -721,18 +724,19 @@ class CodexProvider(Provider):
 
             proc.wait()
 
-            # Store in history
-            self._history.append({"role": "user", "content": user_text})
-            self._history.append({"role": "assistant", "content": full_response.strip()})
-
             if proc.returncode != 0:
                 stderr = _stderr_message(proc)
-                if stderr and "error" in stderr.lower():
-                    yield f"\n[Connection issue: {stderr[:200]}]"
-        except FileNotFoundError:
-            yield "[Error: codex CLI not found]"
-        except Exception as e:
-            yield f"[Error: {e}]"
+                raise ProviderError(f"Provider exited with status {proc.returncode}")
+
+            # Only a successfully completed provider turn belongs in history.
+            self._history.extend([
+                {"role": "user", "content": user_text},
+                {"role": "assistant", "content": full_response.strip()},
+            ])
+        except FileNotFoundError as exc:
+            raise ProviderError("codex CLI not found") from exc
+        except Exception as exc:
+            raise ProviderError("codex provider failed") from exc
         finally:
             if proc is not None:
                 _cleanup_process(proc)

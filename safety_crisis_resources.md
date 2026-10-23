@@ -183,16 +183,21 @@ Watch for these indicators requiring immediate response:
 
 ## Follow-Up Protocols
 
+### Non-Expiring Post-Crisis Latch (2026 Pillar 1 Mandate)
+- **Keep heightened guardrails through the session:** A turn count or elapsed interval is not evidence of clinical recovery. This is a conservative engineering policy, not a claim that this repository measures the person’s risk.
+- Once crisis resources are triggered, the session must remain in strict post-crisis mode (`CrisisStage.CRISIS_FOLLOWUP`, `never_expires=True`) for the entire session.
+- **Separate System 1 from System 2 (Pillar 5):** Never rely solely on a chat model's system prompt to remember crisis mode; enforce post-crisis constraints deterministically in out-of-band runtime code (`wellness_cli/safety_supervisor.py`).
+
 ### After Crisis Interaction
 - Encourage professional follow-up
 - Provide non-crisis resources
 - Acknowledge their courage in reaching out
-- Remind them of ongoing support availability
+- Remind them of ongoing human support availability (never position the AI as a substitute for live care)
 
 ### Ongoing Support
 - Regular check-ins without dependency
 - Celebrate safety decisions
-- Build coping strategies together
+- During the latched crisis session, use local practical resource guidance; do not resume therapy exercises or clinical assessment
 - Maintain professional boundaries
 
 ## Implementation Checklist
